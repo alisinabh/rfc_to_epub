@@ -104,7 +104,7 @@ fn text_reconstructs_sections_and_preserves_art() {
 fn renders_valid_epub_zip() {
     let doc = parse_source(XML, SourceKind::Xml, None).unwrap();
     for mode in [SvgMode::Card, SvgMode::Inline] {
-        let bytes = render::to_epub(&doc, mode).unwrap();
+        let bytes = render::to_epub(&doc, mode, true).unwrap();
         // EPUB is a ZIP; ZIP files start with "PK".
         assert_eq!(&bytes[..2], b"PK");
         // The uncompressed `mimetype` string appears near the start.

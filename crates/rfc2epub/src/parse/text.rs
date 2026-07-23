@@ -21,6 +21,29 @@ use std::sync::OnceLock;
 use crate::error::{Error, Result};
 use crate::model::{Author, Block, Document, Inline, Section, SourceKind};
 
+/// Sentinel line inserted at each original page boundary. A lone form feed is
+/// used because it can never occur in a surviving content line (lines carrying
+/// one are dropped as furniture) and, being Unicode whitespace, it is treated as
+/// a blank separator everywhere except [`parse_blocks`], which detects it first
+/// and emits a [`Block::PageBreak`].
+const PAGE_BREAK: &str = "\u{000C}";
+
+fn is_break(line: &str) -> bool {
+    line == PAGE_BREAK
+}
+
+/// Record a page break in the stripped line stream, dropping any trailing blanks
+/// first and never emitting a leading or duplicated break.
+fn push_page_break(out: &mut Vec<String>) {
+    while out.last().map(|l| l.trim().is_empty() && !is_break(l)).unwrap_or(false) {
+        out.pop();
+    }
+    if out.is_empty() || out.last().map(|l| is_break(l)).unwrap_or(false) {
+        return;
+    }
+    out.push(PAGE_BREAK.to_string());
+}
+
 pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
     let mut doc = Document {
         number: number.or_else(|| extract_number(body)),
@@ -219,14 +242,21 @@ fn strip_furniture(body: &str, title: &str) -> Vec<String> {
     // the running section-name line that follows it on continuation pages.
     let mut expect_running_name = false;
     for raw in body.lines() {
-        if raw.contains('\u{000C}') {
-            continue;
-        }
         let line = raw.to_string();
         let trimmed = line.trim();
 
-        if footer.is_match(&line)
-            || std_header.is_match(&line)
+        // Page boundary: a form feed and/or the "[Page N]" footer. Record a
+        // break (deduped) so the original pagination can be reproduced, then
+        // drop the furniture itself.
+        if raw.contains('\u{000C}') || footer.is_match(&line) {
+            push_page_break(&mut out);
+            expect_running_name = false;
+            continue;
+        }
+
+        // Running headers and dotted TOC lines: drop, but these are not page
+        // boundaries (the break was already recorded at the footer/form feed).
+        if std_header.is_match(&line)
             || draft_header.is_match(&line)
             || date_header.is_match(&line)
             || is_toc_line(&line)
@@ -419,7 +449,12 @@ fn parse_blocks(lines: &[String]) -> Vec<Block> {
     let mut cur: Vec<&str> = Vec::new();
 
     for line in lines {
-        if line.trim().is_empty() {
+        // Check the page-break sentinel before the blank test: a form feed is
+        // whitespace, so it would otherwise read as an ordinary blank line.
+        if is_break(line) {
+            flush_block(&mut cur, &mut blocks);
+            blocks.push(Block::PageBreak);
+        } else if line.trim().is_empty() {
             flush_block(&mut cur, &mut blocks);
         } else {
             cur.push(line);
@@ -616,6 +651,37 @@ Author's Address
         let authors = extract_authors(&lines);
         assert_eq!(authors.len(), 1);
         assert_eq!(authors[0].name, "Eric Rescorla");
+    }
+
+    #[test]
+    fn records_page_break_at_footer_and_form_feed() {
+        // Two pages of prose separated by the usual footer + form-feed + header.
+        let body = "\
+                            A Paged RFC
+
+                            September 2020
+
+
+   First page paragraph one.
+
+                                                                [Page 1]
+\u{000C}
+RFC 9000                     A Paged RFC                September 2020
+
+
+   Second page paragraph two.
+";
+        let doc = parse(body, Some(9000)).unwrap();
+        let blocks: Vec<&Block> = doc.sections.iter().flat_map(|s| s.blocks.iter()).collect();
+
+        // Exactly one page break, sitting between the two paragraphs.
+        let breaks = blocks.iter().filter(|b| matches!(b, Block::PageBreak)).count();
+        assert_eq!(breaks, 1, "one page boundary should be recorded");
+
+        let pos = blocks.iter().position(|b| matches!(b, Block::PageBreak)).unwrap();
+        let before = matches!(blocks[pos - 1], Block::Paragraph(_));
+        let after = matches!(blocks[pos + 1], Block::Paragraph(_));
+        assert!(before && after, "break should fall between the two paragraphs");
     }
 
     #[test]

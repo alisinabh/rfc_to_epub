@@ -10,6 +10,9 @@ use crate::error::Result;
 use crate::model::{Document, SvgMode};
 
 /// Render `doc` to a complete EPUB file, returned as bytes.
-pub fn to_epub(doc: &Document, svg_mode: SvgMode) -> Result<Vec<u8>> {
-    epub::build(doc, svg_mode)
+///
+/// `page_breaks` reproduces the source document's original pagination (only
+/// plain-text sources carry page boundaries; xml2rfc has no page concept).
+pub fn to_epub(doc: &Document, svg_mode: SvgMode, page_breaks: bool) -> Result<Vec<u8>> {
+    epub::build(doc, svg_mode, page_breaks)
 }

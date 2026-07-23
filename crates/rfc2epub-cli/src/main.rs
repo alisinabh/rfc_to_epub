@@ -38,6 +38,11 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = SvgModeArg::Inline)]
     svg_mode: SvgModeArg,
 
+    /// Do not reproduce the original document's page breaks (kept by default;
+    /// only plain-text sources carry pagination).
+    #[arg(long)]
+    no_page_breaks: bool,
+
     /// Do not read or write the download cache.
     #[arg(long)]
     no_cache: bool,
@@ -103,10 +108,11 @@ fn run(cli: Cli) -> Result<()> {
             rfc2epub::fetch::default_cache_dir()
         },
         svg_mode: cli.svg_mode.into(),
+        page_breaks: !cli.no_page_breaks,
     };
 
     if let Some(input) = &cli.input {
-        return convert_local(input, cli.output.as_deref(), &cli.out_dir, opts.svg_mode, cli.quiet);
+        return convert_local(input, cli.output.as_deref(), &cli.out_dir, &opts, cli.quiet);
     }
 
     std::fs::create_dir_all(&cli.out_dir)
@@ -138,7 +144,7 @@ fn convert_local(
     input: &std::path::Path,
     output: Option<&std::path::Path>,
     out_dir: &std::path::Path,
-    svg_mode: SvgMode,
+    opts: &Options,
     quiet: bool,
 ) -> Result<()> {
     let body = std::fs::read_to_string(input)
@@ -148,7 +154,8 @@ fn convert_local(
     let spinner = spinner(quiet, &format!("Converting {}", input.display()));
     let doc = rfc2epub::parse_source(&body, kind, None)
         .with_context(|| format!("parsing {}", input.display()))?;
-    let bytes = rfc2epub::render::to_epub(&doc, svg_mode).context("rendering EPUB")?;
+    let bytes = rfc2epub::render::to_epub(&doc, opts.svg_mode, opts.page_breaks)
+        .context("rendering EPUB")?;
 
     let out = output.map(PathBuf::from).unwrap_or_else(|| {
         let stem = input.file_stem().and_then(|s| s.to_str()).unwrap_or("rfc");

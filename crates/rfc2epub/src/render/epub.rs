@@ -17,7 +17,7 @@ fn section_file(index: usize) -> String {
     format!("s{index:03}.xhtml")
 }
 
-pub fn build(doc: &Document, svg_mode: SvgMode) -> Result<Vec<u8>> {
+pub fn build(doc: &Document, svg_mode: SvgMode, page_breaks: bool) -> Result<Vec<u8>> {
     let mut builder = EpubBuilder::new(ZipLibrary::new()?)?;
 
     builder
@@ -68,6 +68,7 @@ pub fn build(doc: &Document, svg_mode: SvgMode) -> Result<Vec<u8>> {
         mode: svg_mode,
         figs: &mut figs,
         anchors: &anchors,
+        page_breaks,
     };
 
     // Title page.

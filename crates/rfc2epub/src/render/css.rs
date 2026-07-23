@@ -71,6 +71,14 @@ aside, blockquote {
 
 a { color: inherit; text-decoration: underline; }
 
+/* Reproduce the original document's pagination (plain-text sources only). */
+.page-break {
+  page-break-before: always;
+  break-before: page;
+  height: 0;
+  margin: 0;
+}
+
 .cover { margin: 0; padding: 0; text-align: center; }
 .cover img { max-width: 100%; height: auto; }
 

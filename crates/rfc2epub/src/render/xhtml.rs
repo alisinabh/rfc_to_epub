@@ -19,6 +19,9 @@ pub struct Ctx<'a> {
     pub mode: SvgMode,
     pub figs: &'a mut Figures,
     pub anchors: &'a Anchors,
+    /// Whether to honour [`Block::PageBreak`] markers from the original
+    /// pagination. When false, they render as nothing.
+    pub page_breaks: bool,
 }
 
 /// Wrap page `inner` in a complete, well-formed XHTML document.
@@ -212,6 +215,11 @@ fn render_block(block: &Block, out: &mut String, ctx: &mut Ctx) {
             render_blocks(blocks, out, ctx);
             out.push_str("</blockquote>\n");
         }
+        Block::PageBreak => {
+            if ctx.page_breaks {
+                out.push_str("<div class=\"page-break\"></div>\n");
+            }
+        }
     }
 }
 
@@ -376,5 +384,25 @@ mod tests {
             target: "missing".into(),
         };
         assert_eq!(render(&xref, &anchors), "Section 2");
+    }
+
+    fn render_pagebreak(page_breaks: bool) -> String {
+        let anchors = Anchors::new();
+        let mut figs = Figures::new();
+        let mut ctx = Ctx {
+            mode: SvgMode::Inline,
+            figs: &mut figs,
+            anchors: &anchors,
+            page_breaks,
+        };
+        let mut out = String::new();
+        render_block(&Block::PageBreak, &mut out, &mut ctx);
+        out
+    }
+
+    #[test]
+    fn page_break_emitted_only_when_enabled() {
+        assert!(render_pagebreak(true).contains("class=\"page-break\""));
+        assert_eq!(render_pagebreak(false), "");
     }
 }

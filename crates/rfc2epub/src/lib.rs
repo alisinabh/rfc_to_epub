@@ -27,6 +27,9 @@ pub struct Options {
     pub cache_dir: Option<PathBuf>,
     /// How diagrams are rendered with respect to the reader's theme.
     pub svg_mode: model::SvgMode,
+    /// Reproduce the source document's original pagination as EPUB page breaks.
+    /// Only affects plain-text sources (xml2rfc has no page concept).
+    pub page_breaks: bool,
 }
 
 impl Default for Options {
@@ -35,6 +38,7 @@ impl Default for Options {
             source: SourcePref::Auto,
             cache_dir: fetch::default_cache_dir(),
             svg_mode: model::SvgMode::default(),
+            page_breaks: true,
         }
     }
 }
@@ -43,7 +47,7 @@ impl Default for Options {
 pub fn convert_rfc(number: u32, output: &Path, opts: &Options) -> Result<()> {
     let fetched = fetch::fetch_rfc(number, opts.source, opts.cache_dir.as_deref())?;
     let doc = parse::parse(&fetched.body, fetched.kind, Some(number))?;
-    let bytes = render::to_epub(&doc, opts.svg_mode)?;
+    let bytes = render::to_epub(&doc, opts.svg_mode, opts.page_breaks)?;
     std::fs::write(output, bytes).map_err(|source| Error::Io {
         path: output.to_path_buf(),
         source,

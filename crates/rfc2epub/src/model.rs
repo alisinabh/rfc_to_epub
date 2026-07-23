@@ -104,6 +104,10 @@ pub enum Block {
     Aside(Vec<Block>),
     /// A blockquote.
     Quote(Vec<Block>),
+    /// A page boundary from the original document's pagination. Recorded by the
+    /// plain-text parser (xml2rfc has no page concept); the renderer forces a
+    /// page break here unless page-break rendering is disabled.
+    PageBreak,
 }
 
 /// One entry in a definition list or bibliography.

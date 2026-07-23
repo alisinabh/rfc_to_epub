@@ -92,6 +92,7 @@ Options:
   -d, --out-dir <DIR>  Output directory [default: .]
   -f, --format <auto|xml|text>  Source format preference [default: auto]
       --svg-mode <inline|card>  Diagram theme handling [default: inline]
+      --no-page-breaks  Do not reproduce the source's original page breaks
       --no-cache     Do not read or write the download cache
   -q, --quiet        Suppress progress output
 ```
@@ -108,6 +109,13 @@ Options:
   background — self-contained and fully `epubcheck`-clean, but it stays a light
   card on a dark reader page instead of following the theme. Use it if a
   particular reader mishandles inline SVG or you need conformant output.
+
+### Page breaks (`--no-page-breaks`)
+
+By default the original document's pagination is reproduced as EPUB page breaks,
+so each RFC page starts fresh on the reader. Pass `--no-page-breaks` for a fully
+continuous flow. This only affects **plain-text** sources — xml2rfc v3 has no
+page concept, so XML-sourced RFCs are unpaginated either way.
 
 ## Project layout
 
