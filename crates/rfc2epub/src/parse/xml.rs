@@ -11,7 +11,7 @@ use roxmltree::{Document as XmlDoc, Node};
 
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, Block, Document, Inline, List, Section, SourceKind, Table,
+    Author, Block, DefEntry, Document, Inline, List, Section, SourceKind, Table,
 };
 
 pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
@@ -109,7 +109,7 @@ fn parse_references(refs: Node) -> Option<Section> {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "References".to_string());
 
-    let mut items: Vec<(Vec<Inline>, Vec<Block>)> = Vec::new();
+    let mut items: Vec<DefEntry> = Vec::new();
     // References may be grouped (Normative / Informative) in nested <references>.
     collect_references(refs, &mut items);
 
@@ -128,10 +128,11 @@ fn parse_references(refs: Node) -> Option<Section> {
     })
 }
 
-fn collect_references(refs: Node, items: &mut Vec<(Vec<Inline>, Vec<Block>)>) {
+fn collect_references(refs: Node, items: &mut Vec<DefEntry>) {
     for r in refs.children().filter(|n| n.has_tag_name("reference")) {
         let anchor = r.attribute("anchor").unwrap_or("");
         let term = vec![Inline::text(format!("[{anchor}]"))];
+        let id = (!anchor.is_empty()).then(|| anchor.to_string());
         let mut text = String::new();
         // Authors + title + seriesInfo, best-effort.
         if let Some(front) = child(r, "front") {
@@ -146,18 +147,18 @@ fn collect_references(refs: Node, items: &mut Vec<(Vec<Inline>, Vec<Block>)>) {
                 text.push_str(&format!(". {name} {val}"));
             }
         }
-        if let Some(target) = r.attribute("target") {
-            let def = vec![
+        let description = if let Some(target) = r.attribute("target") {
+            vec![
                 Block::Paragraph(vec![Inline::text(text)]),
                 Block::Paragraph(vec![Inline::Link {
                     text: vec![Inline::text(target.to_string())],
                     href: target.to_string(),
                 }]),
-            ];
-            items.push((term, def));
+            ]
         } else {
-            items.push((term, vec![Block::Paragraph(vec![Inline::text(text)])]));
-        }
+            vec![Block::Paragraph(vec![Inline::text(text)])]
+        };
+        items.push(DefEntry { anchor: id, term, description });
     }
     // Recurse into nested <references> groups.
     for nested in refs.children().filter(|n| n.has_tag_name("references")) {
@@ -274,7 +275,11 @@ fn parse_dl(node: Node) -> Block {
             "dt" => pending_term = Some(parse_inlines(child)),
             "dd" => {
                 let term = pending_term.take().unwrap_or_default();
-                items.push((term, parse_blocks_or_inline(child)));
+                items.push(DefEntry {
+                    anchor: None,
+                    term,
+                    description: parse_blocks_or_inline(child),
+                });
             }
             _ => {}
         }

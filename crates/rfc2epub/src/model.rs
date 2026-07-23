@@ -94,14 +94,27 @@ pub enum Block {
     Code { text: String, language: Option<String> },
     /// A bullet or numbered list.
     List(List),
-    /// A definition list (term/description pairs), e.g. xml2rfc `<dl>`.
-    DefinitionList(Vec<(Vec<Inline>, Vec<Block>)>),
+    /// A definition list (term/description pairs), e.g. xml2rfc `<dl>`, and also
+    /// how bibliographies are modelled (each entry carries an [`DefEntry::anchor`]
+    /// so cross-references can link to it).
+    DefinitionList(Vec<DefEntry>),
     /// A real data table (xml2rfc `<table>`), as opposed to art.
     Table(Table),
     /// An aside / note callout.
     Aside(Vec<Block>),
     /// A blockquote.
     Quote(Vec<Block>),
+}
+
+/// One entry in a definition list or bibliography.
+#[derive(Debug, Clone)]
+pub struct DefEntry {
+    /// Anchor id for this entry, so an [`Inline::XRef`] can resolve to it. Set
+    /// for bibliography entries (from a `<reference anchor="…">`); `None` for
+    /// ordinary definition lists.
+    pub anchor: Option<String>,
+    pub term: Vec<Inline>,
+    pub description: Vec<Block>,
 }
 
 #[derive(Debug, Clone)]
