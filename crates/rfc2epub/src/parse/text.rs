@@ -19,11 +19,11 @@ use regex::Regex;
 use std::sync::OnceLock;
 
 use crate::error::{Error, Result};
-use crate::model::{Block, Document, Inline, Section, SourceKind};
+use crate::model::{Author, Block, Document, Inline, Section, SourceKind};
 
 pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
     let mut doc = Document {
-        number,
+        number: number.or_else(|| extract_number(body)),
         source: SourceKind::Text,
         ..Default::default()
     };
@@ -35,11 +35,14 @@ pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
             .map(|n| format!("RFC {n}"))
             .unwrap_or_else(|| "RFC".into())
     });
+    doc.date = extract_date(body);
 
     let lines = strip_furniture(body, &doc.title);
     if lines.is_empty() {
         return Err(Error::Parse("no content after stripping page furniture".into()));
     }
+
+    doc.authors = extract_authors(&lines);
 
     doc.sections = split_sections(&lines);
     if doc.sections.is_empty() {
@@ -87,6 +90,106 @@ fn extract_title(body: &str) -> Option<String> {
     }
     // Use the first centered line as the primary title.
     Some(title_parts.remove(0))
+}
+
+/// The RFC number from the front matter (`Request for Comments: NNNN` or
+/// `RFC: NNNN`), used when the caller didn't supply one (e.g. `--input`).
+fn extract_number(body: &str) -> Option<u32> {
+    let re = regex(r"(?i)(?:Request for Comments|RFC):?\s*(\d{1,6})", &NUMBER_LINE);
+    for line in body.lines().take(30) {
+        if let Some(c) = re.captures(line) {
+            if let Ok(n) = c[1].parse() {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+/// A publication date (`"Month YYYY"`) from the front-matter block.
+fn extract_date(body: &str) -> Option<String> {
+    let re = regex(
+        r"(?i)\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+((?:19|20)\d{2})\b",
+        &DATE_LINE,
+    );
+    for line in body.lines().take(40) {
+        if let Some(c) = re.captures(line) {
+            return Some(format!("{} {}", titlecase(&c[1]), &c[2]));
+        }
+    }
+    None
+}
+
+/// Best-effort author extraction from an "Author's Address(es)" section.
+///
+/// Conservative by design: only clearly name-like lines (mixed-case, spaced,
+/// no digits/`@`/`:`, not an organisation) are accepted, so a failure yields no
+/// authors rather than garbage.
+fn extract_authors(lines: &[String]) -> Vec<Author> {
+    let Some(start) = lines.iter().position(|l| is_author_heading(l)) else {
+        return Vec::new();
+    };
+
+    let mut authors = Vec::new();
+    let mut at_block_start = true;
+    for line in &lines[start + 1..] {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            at_block_start = true;
+            continue;
+        }
+        // Stop if we reach the next section heading.
+        if leading_spaces(line) == 0 && !is_author_heading(line) {
+            break;
+        }
+        // The first line of each address block is the author's name.
+        if at_block_start {
+            if looks_like_person_name(trimmed) {
+                authors.push(Author {
+                    name: trimmed.to_string(),
+                    organization: None,
+                });
+            }
+            at_block_start = false;
+        }
+    }
+    authors
+}
+
+fn is_author_heading(line: &str) -> bool {
+    let t = line.trim().trim_end_matches(':').to_ascii_lowercase();
+    matches!(
+        t.as_str(),
+        "author's address"
+            | "authors' addresses"
+            | "author's addresses"
+            | "authors' address"
+            | "authors addresses"
+            | "author address"
+    )
+}
+
+fn looks_like_person_name(s: &str) -> bool {
+    if s.len() < 3 || s.len() > 40 || !s.contains(' ') {
+        return false;
+    }
+    if s.chars().any(|c| c.is_ascii_digit() || c == '@' || c == ':') {
+        return false;
+    }
+    if !s.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return false;
+    }
+    let lower = s.to_ascii_lowercase();
+    const ORG_WORDS: [&str; 9] = [
+        "inc", "ltd", "llc", "gmbh", "university", "institute", "corporation",
+        "systems", "technologies",
+    ];
+    if ORG_WORDS.iter().any(|w| lower.contains(w)) {
+        return false;
+    }
+    // Mostly letters, spaces, and name punctuation.
+    s.chars()
+        .all(|c| c.is_ascii_alphabetic() || c == ' ' || c == '.' || c == '-' || c == '\'')
 }
 
 fn is_admin_line(s: &str) -> bool {
@@ -475,7 +578,52 @@ static DRAFT_HEADER: OnceLock<Regex> = OnceLock::new();
 static DATE_HEADER: OnceLock<Regex> = OnceLock::new();
 static HEAD_NUM: OnceLock<Regex> = OnceLock::new();
 static HEAD_APX: OnceLock<Regex> = OnceLock::new();
+static DATE_LINE: OnceLock<Regex> = OnceLock::new();
+static NUMBER_LINE: OnceLock<Regex> = OnceLock::new();
 
 fn regex<'a>(pattern: &str, cell: &'a OnceLock<Regex>) -> &'a Regex {
     cell.get_or_init(|| Regex::new(pattern).expect("valid regex"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_number_and_date_from_front() {
+        let body = "\
+Network Working Group                                          E. Rescorla
+Request for Comments: 8446                                       Mozilla
+Category: Standards Track                                     August 2018
+";
+        assert_eq!(extract_number(body), Some(8446));
+        assert_eq!(extract_date(body).as_deref(), Some("August 2018"));
+    }
+
+    #[test]
+    fn extracts_author_from_address_section() {
+        let lines: Vec<String> = "\
+Author's Address
+
+   Eric Rescorla
+   Mozilla
+   Email: ekr@example.com
+
+15. Back matter"
+            .lines()
+            .map(String::from)
+            .collect();
+        let authors = extract_authors(&lines);
+        assert_eq!(authors.len(), 1);
+        assert_eq!(authors[0].name, "Eric Rescorla");
+    }
+
+    #[test]
+    fn person_name_rejects_orgs_and_junk() {
+        assert!(looks_like_person_name("Jon Postel"));
+        assert!(!looks_like_person_name("Mozilla Corporation"));
+        assert!(!looks_like_person_name("Email: ekr@x.com"));
+        assert!(!looks_like_person_name("4676 Admiralty Way"));
+        assert!(!looks_like_person_name("Postel")); // single token
+    }
 }

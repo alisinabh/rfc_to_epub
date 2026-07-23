@@ -71,6 +71,9 @@ aside, blockquote {
 
 a { color: inherit; text-decoration: underline; }
 
+.cover { margin: 0; padding: 0; text-align: center; }
+.cover img { max-width: 100%; height: auto; }
+
 .titlepage { text-align: center; margin-top: 20%; }
 .titlepage .rfc-number { font-size: 1.1em; letter-spacing: 0.2em; color: #666; }
 .titlepage h1 { font-size: 1.9em; }

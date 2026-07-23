@@ -1,5 +1,6 @@
 //! Rendering the [`Document`](crate::model::Document) IR to an EPUB.
 
+mod cover;
 mod css;
 mod epub;
 mod svg;

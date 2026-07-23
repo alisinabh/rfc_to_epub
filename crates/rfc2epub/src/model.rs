@@ -26,6 +26,8 @@ pub struct Document {
     /// RFCs this one updates.
     pub updates: Vec<u32>,
     pub abstract_: Vec<Block>,
+    /// Index keywords (from xml2rfc `<keyword>`), used for `<dc:subject>`.
+    pub keywords: Vec<String>,
     pub sections: Vec<Section>,
     /// How this document was obtained/parsed, for provenance in the colophon.
     pub source: SourceKind,

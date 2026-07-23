@@ -76,6 +76,14 @@ fn parse_front(front: Node, doc: &mut Document) {
     if let Some(abs) = child(front, "abstract") {
         doc.abstract_ = parse_blocks(abs);
     }
+    for kw in front.children().filter(|n| n.has_tag_name("keyword")) {
+        if let Some(text) = kw.text() {
+            let text = text.trim();
+            if !text.is_empty() {
+                doc.keywords.push(text.to_string());
+            }
+        }
+    }
 }
 
 fn parse_back(back: Node, doc: &mut Document) {

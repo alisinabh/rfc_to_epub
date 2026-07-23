@@ -66,6 +66,18 @@ it in light mode regardless of the page theme) — each figure draws its own lig
 `prefers-color-scheme: dark` rule inside the SVG is kept as a bonus for readers
 that do propagate the theme.
 
+### Cover & metadata
+
+Each book gets a generated **cover image**: the RFC number, full title (auto-wrapped
+and sized), authors, category badge, and date on a clean designed background. It's
+rendered from SVG to PNG (via `resvg`, with two small bundled Roboto faces) so it
+shows up as the library/shelf thumbnail — Kindle included.
+
+EPUB metadata is filled in too: `dc:title` (`RFC N: Title`), one `dc:creator` per
+author, `dc:description` (the abstract), `dc:subject` keywords, and a stable
+`urn:ietf:rfc:N` identifier. For the text path, authors (from the "Authors'
+Addresses" section), the date, and the RFC number are recovered heuristically.
+
 ## Usage
 
 ```

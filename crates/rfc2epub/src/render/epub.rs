@@ -8,7 +8,7 @@ use epub_builder::{EpubBuilder, EpubContent, ReferenceType, ZipLibrary};
 
 use super::svg::Figures;
 use super::xhtml::Ctx;
-use super::{css, xhtml};
+use super::{cover, css, xhtml};
 use crate::error::Result;
 use crate::model::{Document, Section, SvgMode};
 
@@ -25,6 +25,13 @@ pub fn build(doc: &Document, svg_mode: SvgMode) -> Result<Vec<u8>> {
     for author in &doc.authors {
         builder.metadata("author", &author.name)?;
     }
+    let description = xhtml::plain_text(&doc.abstract_);
+    if !description.is_empty() {
+        builder.metadata("description", description)?;
+    }
+    for keyword in &doc.keywords {
+        builder.metadata("subject", keyword)?;
+    }
     if let Some(n) = doc.number {
         // Deterministic, stable book id derived from the RFC's canonical URN.
         let urn = format!("urn:ietf:rfc:{n}");
@@ -33,6 +40,17 @@ pub fn build(doc: &Document, svg_mode: SvgMode) -> Result<Vec<u8>> {
     }
 
     builder.stylesheet(css::STYLESHEET.as_bytes())?;
+
+    // Cover: rasterized PNG for the shelf thumbnail plus a full-page cover
+    // document as the first thing the reader sees. Skipped if rendering fails.
+    if let Some(png) = cover::cover_png(doc) {
+        builder.add_cover_image("cover.png", png.as_slice(), "image/png")?;
+        builder.add_content(
+            EpubContent::new("cover.xhtml", xhtml::cover_page("cover.png").as_bytes())
+                .title("Cover")
+                .reftype(ReferenceType::Cover),
+        )?;
+    }
 
     // In Card mode, diagrams are rendered to SVG image files referenced from the
     // content documents; collect them here and write them as resources

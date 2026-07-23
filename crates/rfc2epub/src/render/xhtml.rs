@@ -91,6 +91,44 @@ pub fn section_page(section: &Section, ctx: &mut Ctx) -> String {
     page(&display_heading(section), &s)
 }
 
+/// A full-bleed cover page displaying the cover image.
+pub fn cover_page(image_href: &str) -> String {
+    let inner = format!(
+        "<div class=\"cover\"><img src=\"{}\" alt=\"Cover\"/></div>",
+        encode_double_quoted_attribute(image_href),
+    );
+    page("Cover", &inner)
+}
+
+/// Flatten block content to plain text (used for `<dc:description>`).
+pub fn plain_text(blocks: &[Block]) -> String {
+    let mut parts = Vec::new();
+    for b in blocks {
+        if let Block::Paragraph(inlines) = b {
+            let mut s = String::new();
+            collect_inline_text(inlines, &mut s);
+            let s = s.trim();
+            if !s.is_empty() {
+                parts.push(s.to_string());
+            }
+        }
+    }
+    parts.join("\n\n")
+}
+
+fn collect_inline_text(inlines: &[Inline], out: &mut String) {
+    for i in inlines {
+        match i {
+            Inline::Text(t) => out.push_str(t),
+            Inline::Code(t) => out.push_str(t),
+            Inline::Emph(inner)
+            | Inline::Strong(inner)
+            | Inline::Link { text: inner, .. }
+            | Inline::XRef { text: inner, .. } => collect_inline_text(inner, out),
+        }
+    }
+}
+
 /// Heading text as shown, e.g. `"3.2. Overview"`.
 fn display_heading(section: &Section) -> String {
     match &section.number {
