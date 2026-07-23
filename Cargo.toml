@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/rfc2epub", "crates/rfc2epub-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/alisina/rfc2epub"
+rust-version = "1.85"
+
+[workspace.dependencies]
+rfc2epub = { path = "crates/rfc2epub" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

@@ -1,0 +1,4 @@
+/target
+*.epub
+
+# Cargo.lock is committed: this workspace ships a binary (reproducible builds).

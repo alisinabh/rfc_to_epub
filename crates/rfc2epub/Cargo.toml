@@ -1,0 +1,21 @@
+[package]
+name = "rfc2epub"
+description = "Convert IETF RFCs into clean, reflowable EPUB files for e-readers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+directories = "6.0.0"
+epub-builder = "0.8.3"
+html-escape = "0.2.14"
+regex = "1.13.1"
+roxmltree = "0.21.1"
+thiserror = "2.0.19"
+ureq = "3.3.0"
+uuid = { version = "1.24.0", features = ["v5"] }
