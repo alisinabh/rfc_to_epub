@@ -11,12 +11,16 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+comrak = "0.54"
 directories = "6.0.0"
 epub-builder = "0.8.3"
 html-escape = "0.2.14"
+math-core = "0.7"
 regex = "1.13.1"
 resvg = "0.45.1"
 roxmltree = "0.21.1"
+syntect = "5.3"
 thiserror = "2.0.19"
+two-face = "0.5"
 ureq = "3.3.0"
 uuid = { version = "1.24.0", features = ["v5"] }

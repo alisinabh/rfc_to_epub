@@ -7,22 +7,24 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, ValueEnum};
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
+use rfc2epub::fetch::DocSpec;
 use rfc2epub::model::{SourceKind, SvgMode};
 use rfc2epub::{fetch::SourcePref, Options};
 
-/// Convert IETF RFCs into clean, reflowable EPUB files for e-readers.
+/// Convert IETF RFCs and Markdown spec collections into clean, reflowable EPUBs.
 #[derive(Parser, Debug)]
 #[command(name = "rfc2epub", version, about, long_about = None)]
 struct Cli {
-    /// RFC numbers to convert, e.g. `9110 8446 791`.
-    #[arg(value_name = "RFC", required_unless_present = "input")]
-    rfcs: Vec<u32>,
+    /// Documents to convert: a bare RFC number (`9110`) or a collection-qualified
+    /// id (`eip-1559`, `erc-20`, `bip-341`, `rfc-8446`, `caip-2`).
+    #[arg(value_name = "DOC", required_unless_present = "input")]
+    docs: Vec<String>,
 
-    /// Convert a local RFC source file instead of fetching (XML or text).
-    #[arg(long, value_name = "FILE", conflicts_with = "rfcs")]
+    /// Convert a local source file instead of fetching (XML, text, or Markdown).
+    #[arg(long, value_name = "FILE", conflicts_with = "docs")]
     input: Option<PathBuf>,
 
-    /// Write output to this exact file (only valid for a single RFC).
+    /// Write output to this exact file (only valid for a single document).
     #[arg(short, long, value_name = "FILE")]
     output: Option<PathBuf>,
 
@@ -96,8 +98,8 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    if cli.output.is_some() && cli.rfcs.len() > 1 {
-        bail!("--output can only be used with a single RFC; use --out-dir for batches");
+    if cli.output.is_some() && cli.docs.len() > 1 {
+        bail!("--output can only be used with a single document; use --out-dir for batches");
     }
 
     let opts = Options {
@@ -115,29 +117,50 @@ fn run(cli: Cli) -> Result<()> {
         return convert_local(input, cli.output.as_deref(), &cli.out_dir, &opts, cli.quiet);
     }
 
+    // Parse ids up front so a typo fails before any network work.
+    let specs: Vec<(String, DocSpec)> = cli
+        .docs
+        .iter()
+        .map(|raw| {
+            DocSpec::parse(raw)
+                .map(|s| (raw.clone(), s))
+                .ok_or_else(|| anyhow::anyhow!("unrecognized document id '{raw}' (try 9110, eip-1559, bip-341)"))
+        })
+        .collect::<Result<_>>()?;
+
     std::fs::create_dir_all(&cli.out_dir)
         .with_context(|| format!("creating output dir {}", cli.out_dir.display()))?;
 
     let mut failures = 0;
-    for &n in &cli.rfcs {
+    for (raw, spec) in &specs {
+        let label = spec.label();
         let out = cli
             .output
             .clone()
-            .unwrap_or_else(|| cli.out_dir.join(format!("rfc{n}.epub")));
-        let spinner = spinner(cli.quiet, &format!("RFC {n}: fetching & converting"));
-        match rfc2epub::convert_rfc(n, &out, &opts) {
-            Ok(()) => finish_ok(&spinner, cli.quiet, &format!("RFC {n} → {}", out.display())),
+            .unwrap_or_else(|| cli.out_dir.join(default_filename(spec)));
+        let spinner = spinner(cli.quiet, &format!("{label}: fetching & converting"));
+        match rfc2epub::convert(*spec, &out, &opts) {
+            Ok(()) => finish_ok(&spinner, cli.quiet, &format!("{label} → {}", out.display())),
             Err(e) => {
-                finish_err(&spinner, cli.quiet, &format!("RFC {n}: {e}"));
+                finish_err(&spinner, cli.quiet, &format!("{raw}: {e}"));
                 failures += 1;
             }
         }
     }
 
     if failures > 0 {
-        bail!("{failures} of {} RFC(s) failed", cli.rfcs.len());
+        bail!("{failures} of {} document(s) failed", specs.len());
     }
     Ok(())
+}
+
+/// Default output filename, e.g. `rfc9110.epub`, `eip-1559.epub`, `bip-341.epub`.
+fn default_filename(spec: &DocSpec) -> String {
+    use rfc2epub::model::Collection;
+    match spec.collection {
+        Collection::Rfc => format!("rfc{}.epub", spec.number),
+        other => format!("{}-{}.epub", other.token(), spec.number),
+    }
 }
 
 fn convert_local(
@@ -169,14 +192,22 @@ fn convert_local(
     Ok(())
 }
 
-/// Guess whether a local file is XML or text.
+/// Guess whether a local file is XML, Markdown, MediaWiki, or plain text.
 fn sniff_kind(path: &std::path::Path, body: &str) -> SourceKind {
-    if path.extension().and_then(|e| e.to_str()) == Some("xml") {
-        return SourceKind::Xml;
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("xml") => return SourceKind::Xml,
+        Some("md") | Some("markdown") => return SourceKind::Markdown,
+        Some("mediawiki") | Some("wiki") => return SourceKind::Mediawiki,
+        _ => {}
     }
-    let head = &body[..body.len().min(2048)];
+    // Char-boundary-safe prefix: raw byte slicing panics if a multi-byte
+    // character straddles the cut (non-ASCII near the top of a file).
+    let head = rfc2epub::fetch::char_boundary_prefix(body, 2048);
     if head.contains("<rfc") {
         SourceKind::Xml
+    } else if head.trim_start().starts_with("---") {
+        // A `---` frontmatter block signals a Markdown spec file.
+        SourceKind::Markdown
     } else {
         SourceKind::Text
     }

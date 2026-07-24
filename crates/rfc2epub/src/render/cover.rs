@@ -10,7 +10,7 @@ use std::sync::Arc;
 use html_escape::encode_text;
 use resvg::{tiny_skia, usvg};
 
-use crate::model::Document;
+use crate::model::{Collection, Document};
 
 static FONT_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
 static FONT_BOLD: &[u8] = include_bytes!("../../assets/fonts/Roboto-Bold.ttf");
@@ -106,9 +106,9 @@ fn build_svg(doc: &Document, sizes: &Sizes) -> String {
         "<rect x=\"{x:.0}\" y=\"210\" width=\"92\" height=\"10\" rx=\"5\" fill=\"{ACCENT}\"/>",
         x = MARGIN,
     ));
-    if let Some(n) = doc.number {
+    if let Some(label) = doc.display_id() {
         s.push_str(&text_line(
-            &format!("RFC {n}"),
+            &label,
             MARGIN,
             306.0,
             48.0,
@@ -142,9 +142,10 @@ fn build_svg(doc: &Document, sizes: &Sizes) -> String {
 
     // Footer, anchored to the bottom.
     let footer_y = H - 130.0 - sizes.footer_sub * 1.3;
-    s.push_str(&text_line("IETF", MARGIN, footer_y, sizes.footer, true, ACCENT, Some(3.0)));
+    let (footer_short, footer_long) = footer_branding(doc);
+    s.push_str(&text_line(footer_short, MARGIN, footer_y, sizes.footer, true, ACCENT, Some(3.0)));
     s.push_str(&text_line(
-        "Internet Engineering Task Force",
+        footer_long,
         MARGIN,
         footer_y + sizes.footer_sub * 1.35,
         sizes.footer_sub,
@@ -158,7 +159,7 @@ fn build_svg(doc: &Document, sizes: &Sizes) -> String {
     if let Some(date) = &doc.date {
         s.push_str(&text_line(date, MARGIN, date_baseline, sizes.date, false, MUTED, None));
     }
-    if let Some(cat) = &doc.category {
+    if let Some(cat) = &doc.status {
         let label = cat.to_uppercase();
         let badge_h = sizes.badge * 2.0;
         // Padding inside the border, with a little extra on the right.
@@ -196,6 +197,19 @@ fn build_svg(doc: &Document, sizes: &Sizes) -> String {
 
     s.push_str("</svg>");
     s
+}
+
+/// The short/long organisation branding shown in the cover footer, per
+/// collection.
+fn footer_branding(doc: &Document) -> (&'static str, &'static str) {
+    match doc.collection() {
+        Some(Collection::Rfc) | None => ("IETF", "Internet Engineering Task Force"),
+        Some(Collection::Eip) => ("Ethereum", "Ethereum Improvement Proposals"),
+        Some(Collection::Erc) => ("Ethereum", "Ethereum Requests for Comment"),
+        Some(Collection::Bip) => ("Bitcoin", "Bitcoin Improvement Proposals"),
+        Some(Collection::Bolt) => ("Lightning", "Basis of Lightning Technology"),
+        Some(Collection::Caip) => ("Chain Agnostic", "Chain Agnostic Improvement Proposals"),
+    }
 }
 
 /// One `<text>` element.

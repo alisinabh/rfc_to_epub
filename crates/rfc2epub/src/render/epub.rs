@@ -21,7 +21,7 @@ pub fn build(doc: &Document, svg_mode: SvgMode, page_breaks: bool) -> Result<Vec
     let mut builder = EpubBuilder::new(ZipLibrary::new()?)?;
 
     builder
-        .metadata("title", book_title(doc))?
+        .metadata("title", doc.book_title())?
         .metadata("lang", "en")?
         .metadata(
             "generator",
@@ -37,9 +37,9 @@ pub fn build(doc: &Document, svg_mode: SvgMode, page_breaks: bool) -> Result<Vec
     for keyword in &doc.keywords {
         builder.metadata("subject", keyword)?;
     }
-    if let Some(n) = doc.number {
-        // Deterministic, stable book id derived from the RFC's canonical URN.
-        let urn = format!("urn:ietf:rfc:{n}");
+    if let Some(id) = doc.id {
+        // Deterministic, stable book id derived from the document's canonical URN.
+        let urn = id.urn();
         let uuid = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, urn.as_bytes());
         builder.set_uuid(uuid);
     }
@@ -101,16 +101,14 @@ pub fn build(doc: &Document, svg_mode: SvgMode, page_breaks: bool) -> Result<Vec
         builder.add_resource(path, svg.as_bytes(), "image/svg+xml")?;
     }
 
+    // Embed fetched binary assets (images) referenced by the content.
+    for asset in &doc.assets {
+        builder.add_resource(&asset.path, asset.bytes.as_slice(), &asset.mime)?;
+    }
+
     let mut out = Vec::new();
     builder.generate(&mut out)?;
     Ok(out)
-}
-
-fn book_title(doc: &Document) -> String {
-    match doc.number {
-        Some(n) => format!("RFC {n}: {}", doc.title),
-        None => doc.title.clone(),
-    }
 }
 
 fn toc_title(section: &Section) -> String {

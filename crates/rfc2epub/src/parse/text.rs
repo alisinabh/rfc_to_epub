@@ -19,7 +19,7 @@ use regex::Regex;
 use std::sync::OnceLock;
 
 use crate::error::{Error, Result};
-use crate::model::{Author, Block, Document, Inline, Section, SourceKind};
+use crate::model::{Author, Block, Collection, DocId, Document, Inline, Section, SourceKind};
 
 /// Sentinel line inserted at each original page boundary. A lone form feed is
 /// used because it can never occur in a surviving content line (lines carrying
@@ -45,8 +45,9 @@ fn push_page_break(out: &mut Vec<String>) {
 }
 
 pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
+    let num = number.or_else(|| extract_number(body));
     let mut doc = Document {
-        number: number.or_else(|| extract_number(body)),
+        id: num.map(|n| DocId::new(Collection::Rfc, n)),
         source: SourceKind::Text,
         ..Default::default()
     };
@@ -171,6 +172,7 @@ fn extract_authors(lines: &[String]) -> Vec<Author> {
                 authors.push(Author {
                     name: trimmed.to_string(),
                     organization: None,
+                    link: None,
                 });
             }
             at_block_start = false;

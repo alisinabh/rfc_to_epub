@@ -12,8 +12,8 @@ pub enum Error {
         source: Box<ureq::Error>,
     },
 
-    #[error("RFC {0} was not found (no XML or text available upstream)")]
-    NotFound(u32),
+    #[error("{0} was not found upstream")]
+    NotFound(String),
 
     #[error("failed to read {path}: {source}")]
     Io {
@@ -25,8 +25,11 @@ pub enum Error {
     #[error("could not parse RFC XML: {0}")]
     Xml(#[from] roxmltree::Error),
 
-    #[error("input did not look like a parseable RFC: {0}")]
+    #[error("could not parse the document: {0}")]
     Parse(String),
+
+    #[error("{0}")]
+    Unsupported(String),
 
     #[error("failed to build EPUB: {0}")]
     Epub(String),

@@ -11,7 +11,8 @@ use roxmltree::{Document as XmlDoc, Node};
 
 use crate::error::{Error, Result};
 use crate::model::{
-    Author, Block, DefEntry, Document, Inline, List, Section, SourceKind, Table,
+    Author, Block, Collection, DefEntry, DocId, Document, Inline, List, Relation, Section,
+    SourceKind, Table,
 };
 
 pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
@@ -26,13 +27,20 @@ pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
         ..Default::default()
     };
 
-    doc.number = rfc
+    let num = rfc
         .attribute("number")
         .and_then(|s| s.parse().ok())
         .or(number);
-    doc.obsoletes = parse_num_list(rfc.attribute("obsoletes"));
-    doc.updates = parse_num_list(rfc.attribute("updates"));
-    doc.category = rfc.attribute("category").map(map_category);
+    doc.id = num.map(|n| DocId::new(Collection::Rfc, n));
+    let obsoletes = parse_num_list(rfc.attribute("obsoletes"));
+    if !obsoletes.is_empty() {
+        doc.relations.push(Relation::new("Obsoletes", rfc_ids(&obsoletes)));
+    }
+    let updates = parse_num_list(rfc.attribute("updates"));
+    if !updates.is_empty() {
+        doc.relations.push(Relation::new("Updates", rfc_ids(&updates)));
+    }
+    doc.status = rfc.attribute("category").map(map_category);
 
     if let Some(front) = child(rfc, "front") {
         parse_front(front, &mut doc);
@@ -62,7 +70,7 @@ fn parse_front(front: Node, doc: &mut Document) {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         if !name.is_empty() || organization.is_some() {
-            doc.authors.push(Author { name, organization });
+            doc.authors.push(Author { name, organization, link: None });
         }
     }
     if let Some(date) = child(front, "date") {
@@ -479,6 +487,11 @@ fn is_block_tag(n: Node) -> bool {
 
 fn child<'a, 'input>(node: Node<'a, 'input>, tag: &str) -> Option<Node<'a, 'input>> {
     node.children().find(|n| n.has_tag_name(tag))
+}
+
+/// Wrap RFC numbers as same-collection [`DocId`]s for a [`Relation`].
+fn rfc_ids(nums: &[u32]) -> Vec<DocId> {
+    nums.iter().map(|&n| DocId::new(Collection::Rfc, n)).collect()
 }
 
 fn parse_num_list(attr: Option<&str>) -> Vec<u32> {

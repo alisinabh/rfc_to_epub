@@ -1,24 +1,33 @@
 # rfc2epub
 
-Convert IETF RFCs into clean, **reflowable EPUB** files that read well on Kindle
-and other e-readers.
+Convert IETF RFCs — and Markdown-based spec collections like Ethereum
+**EIPs/ERCs**, Bitcoin **BIPs**, and **CAIPs** — into clean, **reflowable EPUB**
+files that read well on Kindle and other e-readers.
 
 RFCs are published as fixed 72-column text with page breaks — painful on a 6"
 screen. `rfc2epub` reflows the prose to your device while keeping packet
 diagrams, ABNF, and code **verbatim and monospaced** so they never get mangled.
+Markdown specs bring their own needs — real **images**, **syntax-highlighted**
+code, and **math** — all handled at build time so the EPUB stays self-contained
+and JavaScript-free.
 
 ```console
 $ rfc2epub 9110
 ✓ RFC 9110 → ./rfc9110.epub
 
-$ rfc2epub 8446 791 2119 --out-dir ~/rfcs
-✓ RFC 8446 → ~/rfcs/rfc8446.epub
-✓ RFC 791 → ~/rfcs/rfc791.epub
-✓ RFC 2119 → ~/rfcs/rfc2119.epub
+$ rfc2epub eip-1559 erc-721 bip-3 --out-dir ~/specs
+✓ EIP-1559 → ~/specs/eip-1559.epub
+✓ ERC-721 → ~/specs/erc-721.epub
+✓ BIP 3 → ~/specs/bip-3.epub
 ```
 
 Then use **Send to Kindle** (Amazon accepts EPUB directly) or copy the file to
 any reader.
+
+Documents are named by a bare RFC number (`9110`) or a collection-qualified id
+(`eip-1559`, `erc-20`, `bip-341`, `rfc-8446`, `caip-2`). ERC-20 style ids that
+now live in the ERCs repo are followed automatically (the EIPs repo keeps a
+`status: Moved` tombstone that redirects the fetch).
 
 ## Why EPUB?
 
@@ -32,13 +41,18 @@ Kindle has accepted EPUB since 2022.
 fetch (rfc-editor.org, cached) → parse → IR → render XHTML → assemble EPUB
 ```
 
-The key idea is a single intermediate representation (IR) produced by two
+The key idea is a single intermediate representation (IR) produced by several
 parsers and consumed by one renderer:
 
 | Input | When used | Fidelity |
 |-------|-----------|----------|
 | **xml2rfc v3** | Modern RFCs (~2020+) that publish canonical XML | High — real section/prose/artwork/code structure |
 | **Plain text** | Everything older (e.g. RFC 791) | Heuristic reconstruction; diagrams kept verbatim |
+| **Markdown (GFM)** | EIPs, ERCs, CAIPs, and Markdown BIPs | High — full AST, GitHub-compatible anchors, images/highlighting/math |
+
+The IR is format-neutral: only [`Collection`](crates/rfc2epub/src/model.rs)
+knows how an id is spelled and where it lives on the web. RFC output is byte-for-
+byte the same as before.
 
 By default (`--format auto`) it fetches the XML, verifies it is really v3, and
 falls back to the published text otherwise. The IR's central distinction is
@@ -78,16 +92,46 @@ author, `dc:description` (the abstract), `dc:subject` keywords, and a stable
 `urn:ietf:rfc:N` identifier. For the text path, authors (from the "Authors'
 Addresses" section), the date, and the RFC number are recovered heuristically.
 
+## Spec collections (EIPs, ERCs, BIPs, CAIPs)
+
+Markdown specs are parsed with a full GitHub-flavored-Markdown AST, so structure,
+tables, footnotes, task lists, and description lists all survive. Three things
+are done at **build time** (EPUB readers run no JavaScript):
+
+- **Images** referenced by the Markdown are downloaded, cached, and embedded as
+  EPUB resources; `<img>` links are rewritten to the in-book copy. Downloads that
+  fail degrade to the image's alt text rather than breaking the build.
+- **Fenced code** is syntax-highlighted into class-based `<span>`s (via `syntect`
+  + `two-face`, so Solidity, TypeScript, JSON, Python, … all work), styled by an
+  embedded stylesheet that adapts to light, dark, and grayscale e-ink.
+- **Math** (`$…$` / `$$…$$`) is converted to **MathML Core** with the original
+  LaTeX kept as `alttext`. Apple Books, Kobo, KOReader, and Calibre render it;
+  Kindle's support is inconsistent (a known reader limitation).
+
+The **preamble** (the `---` frontmatter, or the indented code-fence header that
+Markdown BIPs use) is parsed as ordered RFC-822 headers per EIP-1 / BIP-3: the
+id, title, authors (with GitHub/email links), status, and `requires`/`replaces`
+relations map to first-class fields; anything else becomes a metadata table on
+the title page. In-document `#section` links resolve to in-book anchors (the
+GitHub-compatible slugs match), and links to *other* documents (`./eip-2718.md`)
+become canonical web links, since an EPUB holds a single document.
+
+Not yet handled: **MediaWiki** BIPs (≈93% of BIPs — a clear error points at the
+planned parser milestone; the 14 Markdown BIPs work today) and in-process
+**mermaid** rendering (diagrams fall back to their source shown verbatim, as
+GitHub did before it added mermaid support).
+
 ## Usage
 
 ```
-rfc2epub [OPTIONS] <RFC>...
+rfc2epub [OPTIONS] <DOC>...
 
 Arguments:
-  <RFC>...  RFC numbers to convert, e.g. 9110 8446 791
+  <DOC>...  Documents to convert: a bare RFC number (9110) or a
+            collection-qualified id (eip-1559, erc-20, bip-341, rfc-8446, caip-2)
 
 Options:
-  --input <FILE>     Convert a local RFC source file instead of fetching
+  --input <FILE>     Convert a local source file instead of fetching (.xml/.txt/.md)
   -o, --output <FILE>  Write to this exact file (single RFC only)
   -d, --out-dir <DIR>  Output directory [default: .]
   -f, --format <auto|xml|text>  Source format preference [default: auto]
@@ -121,30 +165,45 @@ page concept, so XML-sourced RFCs are unpaginated either way.
 
 ```
 crates/
-  rfc2epub/       library core (fetch, parse, render)
+  rfc2epub/       library core
+    model.rs      the format-neutral IR (Document, Block, Inline, Collection)
+    fetch.rs      per-collection sources + caching; assets.rs embeds images
+    parse/        xml.rs, text.rs, markdown.rs (comrak), preamble.rs (RFC-822)
+    highlight.rs  syntect + two-face class-based highlighting
+    mathml.rs     LaTeX → MathML Core (math-core)
+    render/       xhtml.rs, css.rs, svg.rs, cover.rs, epub.rs
   rfc2epub-cli/   the `rfc2epub` command-line tool
 ```
 
 The library is usable on its own:
 
 ```rust
-let opts = rfc2epub::Options::default();
-rfc2epub::convert_rfc(9110, std::path::Path::new("rfc9110.epub"), &opts)?;
+use rfc2epub::{convert, DocSpec, Options};
+use rfc2epub::model::Collection;
+
+let opts = Options::default();
+convert(DocSpec::new(Collection::Eip, 1559), "eip-1559.epub".as_ref(), &opts)?;
+// or the RFC convenience wrapper:
+rfc2epub::convert_rfc(9110, "rfc9110.epub".as_ref(), &opts)?;
 ```
 
 ## Status & limitations
 
-Working today: XML path (full structure, metadata, tables, lists, code) and a
-text fallback that recovers sections, nesting, prose, and diagrams.
+Working today: RFCs via the XML path (full structure, metadata, tables, lists,
+code) and a text fallback; and Markdown spec collections (EIPs, ERCs, CAIPs, and
+the Markdown BIPs) with images, syntax highlighting, math, footnotes, and
+cross-references.
 
 Known rough edges in the **text** path (older RFCs), inherent to reconstructing
-structure from plain text:
+structure from plain text: front matter is grouped loosely, unusual heading
+styles may be missed, and cross-references stay plain text.
 
-- Front matter (status-of-memo boilerplate) is grouped loosely.
-- Very unusual heading styles may be missed.
-- Cross-references are rendered as plain text, not in-book links (both paths).
+For **spec collections**: MediaWiki BIPs and in-process mermaid rendering are not
+yet implemented (see above); raw inline HTML beyond the common cases (`<br>`,
+`<sup>`, `<details>`) degrades to text; and MathML rendering depends on the
+reader (weakest on Kindle).
 
-Contributions and bug reports on specific RFCs are welcome.
+Contributions and bug reports on specific documents are welcome.
 
 ## License
 
