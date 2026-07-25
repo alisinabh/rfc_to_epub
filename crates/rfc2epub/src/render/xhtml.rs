@@ -109,7 +109,15 @@ pub fn titlepage(doc: &Document, ctx: &mut Ctx) -> String {
         SourceKind::Mediawiki => "MediaWiki source",
         SourceKind::Unknown => "source",
     });
-    s.push_str(" by rfc2epub.</p>\n");
+    // The generator credit carries its own source link so a reader who wants to
+    // regenerate, report a rendering bug, or check provenance has somewhere to
+    // go. The URL comes from the package manifest rather than a literal so the
+    // colophon and `Cargo.toml`'s `repository` can never disagree.
+    let _ = writeln!(
+        s,
+        " by <a href=\"{}\">rfc2epub</a>.</p>",
+        encode_double_quoted_attribute(env!("CARGO_PKG_REPOSITORY")),
+    );
     s.push_str("</section>\n");
 
     page(&doc.title, &s)
