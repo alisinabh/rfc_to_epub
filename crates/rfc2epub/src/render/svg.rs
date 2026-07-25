@@ -208,7 +208,7 @@ mod tests {
         assert!(!svg.starts_with("<?xml")); // inline fragment, no XML decl
         assert!(svg.contains("fill:currentColor"));
         assert!(!svg.contains("<rect")); // transparent, no background
-        // No fixed padding in inline mode.
+                                         // No fixed padding in inline mode.
         assert!(svg.contains(&format!("width=\"{:.0}\"", 1.0 * CHAR_W)));
     }
 

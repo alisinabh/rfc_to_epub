@@ -69,7 +69,11 @@ fn rasterize(svg: &str) -> Option<Vec<u8>> {
     let tree = usvg::Tree::from_str(svg, &opt).ok()?;
     let size = tree.size().to_int_size();
     let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height())?;
-    resvg::render(&tree, tiny_skia::Transform::identity(), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
     pixmap.encode_png().ok()
 }
 
@@ -136,14 +140,30 @@ fn build_svg(doc: &Document, sizes: &Sizes) -> String {
 
     // Authors (cap the list so it never overflows). Spacing scales with size.
     for line in author_lines(doc) {
-        s.push_str(&text_line(&line, MARGIN, y, sizes.author, false, SUBTLE, None));
+        s.push_str(&text_line(
+            &line,
+            MARGIN,
+            y,
+            sizes.author,
+            false,
+            SUBTLE,
+            None,
+        ));
         y += sizes.author * 1.42;
     }
 
     // Footer, anchored to the bottom.
     let footer_y = H - 130.0 - sizes.footer_sub * 1.3;
     let (footer_short, footer_long) = footer_branding(doc);
-    s.push_str(&text_line(footer_short, MARGIN, footer_y, sizes.footer, true, ACCENT, Some(3.0)));
+    s.push_str(&text_line(
+        footer_short,
+        MARGIN,
+        footer_y,
+        sizes.footer,
+        true,
+        ACCENT,
+        Some(3.0),
+    ));
     s.push_str(&text_line(
         footer_long,
         MARGIN,
@@ -157,7 +177,15 @@ fn build_svg(doc: &Document, sizes: &Sizes) -> String {
     // Category badge and date sit together just above the footer.
     let date_baseline = footer_y - 150.0;
     if let Some(date) = &doc.date {
-        s.push_str(&text_line(date, MARGIN, date_baseline, sizes.date, false, MUTED, None));
+        s.push_str(&text_line(
+            date,
+            MARGIN,
+            date_baseline,
+            sizes.date,
+            false,
+            MUTED,
+            None,
+        ));
     }
     if let Some(cat) = &doc.status {
         let label = cat.to_uppercase();

@@ -35,7 +35,11 @@ fn is_break(line: &str) -> bool {
 /// Record a page break in the stripped line stream, dropping any trailing blanks
 /// first and never emitting a leading or duplicated break.
 fn push_page_break(out: &mut Vec<String>) {
-    while out.last().map(|l| l.trim().is_empty() && !is_break(l)).unwrap_or(false) {
+    while out
+        .last()
+        .map(|l| l.trim().is_empty() && !is_break(l))
+        .unwrap_or(false)
+    {
         out.pop();
     }
     if out.is_empty() || out.last().map(|l| is_break(l)).unwrap_or(false) {
@@ -63,7 +67,9 @@ pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
 
     let lines = strip_furniture(body, &doc.title);
     if lines.is_empty() {
-        return Err(Error::Parse("no content after stripping page furniture".into()));
+        return Err(Error::Parse(
+            "no content after stripping page furniture".into(),
+        ));
     }
 
     doc.authors = extract_authors(&lines);
@@ -119,7 +125,10 @@ fn extract_title(body: &str) -> Option<String> {
 /// The RFC number from the front matter (`Request for Comments: NNNN` or
 /// `RFC: NNNN`), used when the caller didn't supply one (e.g. `--input`).
 fn extract_number(body: &str) -> Option<u32> {
-    let re = regex(r"(?i)(?:Request for Comments|RFC):?\s*(\d{1,6})", &NUMBER_LINE);
+    let re = regex(
+        r"(?i)(?:Request for Comments|RFC):?\s*(\d{1,6})",
+        &NUMBER_LINE,
+    );
     for line in body.lines().take(30) {
         if let Some(c) = re.captures(line) {
             if let Ok(n) = c[1].parse() {
@@ -198,7 +207,9 @@ fn looks_like_person_name(s: &str) -> bool {
     if s.len() < 3 || s.len() > 40 || !s.contains(' ') {
         return false;
     }
-    if s.chars().any(|c| c.is_ascii_digit() || c == '@' || c == ':') {
+    if s.chars()
+        .any(|c| c.is_ascii_digit() || c == '@' || c == ':')
+    {
         return false;
     }
     if !s.starts_with(|c: char| c.is_ascii_uppercase()) {
@@ -206,8 +217,15 @@ fn looks_like_person_name(s: &str) -> bool {
     }
     let lower = s.to_ascii_lowercase();
     const ORG_WORDS: [&str; 9] = [
-        "inc", "ltd", "llc", "gmbh", "university", "institute", "corporation",
-        "systems", "technologies",
+        "inc",
+        "ltd",
+        "llc",
+        "gmbh",
+        "university",
+        "institute",
+        "corporation",
+        "systems",
+        "technologies",
     ];
     if ORG_WORDS.iter().any(|w| lower.contains(w)) {
         return false;
@@ -420,7 +438,10 @@ fn parse_heading(line: &str, idx: usize, lines: &[String]) -> Option<(Option<Str
         return Some((Some(c[1].to_string()), titlecase_heading(&title)));
     }
 
-    let appendix = regex(r"^(?:APPENDIX|Appendix)\s+([A-Z0-9]+)[.:]?\s*(.*)$", &HEAD_APX);
+    let appendix = regex(
+        r"^(?:APPENDIX|Appendix)\s+([A-Z0-9]+)[.:]?\s*(.*)$",
+        &HEAD_APX,
+    );
     if let Some(c) = appendix.captures(trimmed) {
         let label = &c[1];
         let rest = c[2].trim();
@@ -437,7 +458,11 @@ fn parse_heading(line: &str, idx: usize, lines: &[String]) -> Option<(Option<Str
 
 /// A heading is preceded by a blank line (or the start of the document).
 fn preceded_by_blank(idx: usize, lines: &[String]) -> bool {
-    idx == 0 || lines.get(idx - 1).map(|l| l.trim().is_empty()).unwrap_or(true)
+    idx == 0
+        || lines
+            .get(idx - 1)
+            .map(|l| l.trim().is_empty())
+            .unwrap_or(true)
 }
 
 /// Table-of-contents entries carry dot leaders (`....` or `. . .`).
@@ -677,13 +702,22 @@ RFC 9000                     A Paged RFC                September 2020
         let blocks: Vec<&Block> = doc.sections.iter().flat_map(|s| s.blocks.iter()).collect();
 
         // Exactly one page break, sitting between the two paragraphs.
-        let breaks = blocks.iter().filter(|b| matches!(b, Block::PageBreak)).count();
+        let breaks = blocks
+            .iter()
+            .filter(|b| matches!(b, Block::PageBreak))
+            .count();
         assert_eq!(breaks, 1, "one page boundary should be recorded");
 
-        let pos = blocks.iter().position(|b| matches!(b, Block::PageBreak)).unwrap();
+        let pos = blocks
+            .iter()
+            .position(|b| matches!(b, Block::PageBreak))
+            .unwrap();
         let before = matches!(blocks[pos - 1], Block::Paragraph(_));
         let after = matches!(blocks[pos + 1], Block::Paragraph(_));
-        assert!(before && after, "break should fall between the two paragraphs");
+        assert!(
+            before && after,
+            "break should fall between the two paragraphs"
+        );
     }
 
     #[test]

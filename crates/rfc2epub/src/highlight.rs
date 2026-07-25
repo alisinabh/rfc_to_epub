@@ -50,8 +50,7 @@ pub fn highlight(code: &str, lang: &str) -> Option<String> {
     }
     let ss = syntaxes();
     let syntax = ss.find_syntax_by_token(normalize_lang(lang))?;
-    let mut generator =
-        ClassedHTMLGenerator::new_with_class_style(syntax, ss, ClassStyle::Spaced);
+    let mut generator = ClassedHTMLGenerator::new_with_class_style(syntax, ss, ClassStyle::Spaced);
     for line in LinesWithEndings::from(code) {
         // A malformed line aborts highlighting; the caller then renders plain.
         generator

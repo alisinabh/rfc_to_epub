@@ -260,11 +260,7 @@ fn render_block(block: &Block, out: &mut String, ctx: &mut Ctx) {
             for entry in items {
                 match &entry.anchor {
                     Some(id) => {
-                        let _ = write!(
-                            out,
-                            "<dt id=\"{}\">",
-                            encode_double_quoted_attribute(id)
-                        );
+                        let _ = write!(out, "<dt id=\"{}\">", encode_double_quoted_attribute(id));
                     }
                     None => out.push_str("<dt>"),
                 }
@@ -286,7 +282,11 @@ fn render_block(block: &Block, out: &mut String, ctx: &mut Ctx) {
             render_blocks(blocks, out, ctx);
             out.push_str("</blockquote>\n");
         }
-        Block::Figure { resource, alt, caption } => render_image_figure(resource, alt, caption, out, ctx),
+        Block::Figure {
+            resource,
+            alt,
+            caption,
+        } => render_image_figure(resource, alt, caption, out, ctx),
         Block::Diagram { svg, source } => {
             if svg.trim().is_empty() {
                 // No rendered SVG: fall back to the diagram source as artwork.
@@ -441,11 +441,7 @@ fn render_inline(inline: &Inline, out: &mut String, anchors: &Anchors) {
             let _ = write!(out, "<code>{}</code>", encode_text(t));
         }
         Inline::Link { text, href } => {
-            let _ = write!(
-                out,
-                "<a href=\"{}\">",
-                encode_double_quoted_attribute(href)
-            );
+            let _ = write!(out, "<a href=\"{}\">", encode_double_quoted_attribute(href));
             render_inlines(text, out, anchors);
             out.push_str("</a>");
         }
@@ -539,7 +535,10 @@ mod tests {
     fn footnote_ref_links_to_definition_when_known() {
         let mut anchors = Anchors::new();
         anchors.insert("fn-1".into(), "s005.xhtml".into());
-        let fnref = Inline::FootnoteRef { name: "1".into(), number: 1 };
+        let fnref = Inline::FootnoteRef {
+            name: "1".into(),
+            number: 1,
+        };
         assert_eq!(
             render(&fnref, &anchors),
             "<sup class=\"footnote-ref\"><a epub:type=\"noteref\" href=\"s005.xhtml#fn-1\">1</a></sup>"

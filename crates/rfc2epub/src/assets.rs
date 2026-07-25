@@ -72,7 +72,9 @@ impl Resolver<'_> {
 
     fn walk_block(&mut self, block: &mut Block) {
         match block {
-            Block::Figure { resource, caption, .. } => {
+            Block::Figure {
+                resource, caption, ..
+            } => {
                 *resource = self.resource(resource);
                 if let Some(cap) = caption {
                     self.walk_inlines(cap);
@@ -201,7 +203,10 @@ fn join_url(base: &str, rel: &str) -> Option<String> {
     let scheme_end = base.find("://")? + 3;
     let host_end = base[scheme_end..].find('/').map(|i| scheme_end + i)?;
     let origin = &base[..host_end];
-    let mut segs: Vec<&str> = base[host_end..].split('/').filter(|s| !s.is_empty()).collect();
+    let mut segs: Vec<&str> = base[host_end..]
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
     for part in rel.split('/') {
         match part {
             "" | "." => {}

@@ -34,11 +34,13 @@ pub fn parse(body: &str, number: Option<u32>) -> Result<Document> {
     doc.id = num.map(|n| DocId::new(Collection::Rfc, n));
     let obsoletes = parse_num_list(rfc.attribute("obsoletes"));
     if !obsoletes.is_empty() {
-        doc.relations.push(Relation::new("Obsoletes", rfc_ids(&obsoletes)));
+        doc.relations
+            .push(Relation::new("Obsoletes", rfc_ids(&obsoletes)));
     }
     let updates = parse_num_list(rfc.attribute("updates"));
     if !updates.is_empty() {
-        doc.relations.push(Relation::new("Updates", rfc_ids(&updates)));
+        doc.relations
+            .push(Relation::new("Updates", rfc_ids(&updates)));
     }
     doc.status = rfc.attribute("category").map(map_category);
 
@@ -70,7 +72,11 @@ fn parse_front(front: Node, doc: &mut Document) {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         if !name.is_empty() || organization.is_some() {
-            doc.authors.push(Author { name, organization, link: None });
+            doc.authors.push(Author {
+                name,
+                organization,
+                link: None,
+            });
         }
     }
     if let Some(date) = child(front, "date") {
@@ -149,9 +155,7 @@ fn collect_references(refs: Node, items: &mut Vec<DefEntry>) {
             }
         }
         for si in r.descendants().filter(|n| n.has_tag_name("seriesInfo")) {
-            if let (Some(name), Some(val)) =
-                (si.attribute("name"), si.attribute("value"))
-            {
+            if let (Some(name), Some(val)) = (si.attribute("name"), si.attribute("value")) {
                 text.push_str(&format!(". {name} {val}"));
             }
         }
@@ -166,7 +170,11 @@ fn collect_references(refs: Node, items: &mut Vec<DefEntry>) {
         } else {
             vec![Block::Paragraph(vec![Inline::text(text)])]
         };
-        items.push(DefEntry { anchor: id, term, description });
+        items.push(DefEntry {
+            anchor: id,
+            term,
+            description,
+        });
     }
     // Recurse into nested <references> groups.
     for nested in refs.children().filter(|n| n.has_tag_name("references")) {
@@ -491,16 +499,14 @@ fn child<'a, 'input>(node: Node<'a, 'input>, tag: &str) -> Option<Node<'a, 'inpu
 
 /// Wrap RFC numbers as same-collection [`DocId`]s for a [`Relation`].
 fn rfc_ids(nums: &[u32]) -> Vec<DocId> {
-    nums.iter().map(|&n| DocId::new(Collection::Rfc, n)).collect()
+    nums.iter()
+        .map(|&n| DocId::new(Collection::Rfc, n))
+        .collect()
 }
 
 fn parse_num_list(attr: Option<&str>) -> Vec<u32> {
-    attr.map(|s| {
-        s.split(',')
-            .filter_map(|p| p.trim().parse().ok())
-            .collect()
-    })
-    .unwrap_or_default()
+    attr.map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect())
+        .unwrap_or_default()
 }
 
 fn map_category(code: &str) -> String {

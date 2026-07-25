@@ -23,10 +23,7 @@ pub fn build(doc: &Document, svg_mode: SvgMode, page_breaks: bool) -> Result<Vec
     builder
         .metadata("title", doc.book_title())?
         .metadata("lang", "en")?
-        .metadata(
-            "generator",
-            concat!("rfc2epub ", env!("CARGO_PKG_VERSION")),
-        )?;
+        .metadata("generator", concat!("rfc2epub ", env!("CARGO_PKG_VERSION")))?;
     for author in &doc.authors {
         builder.metadata("author", &author.name)?;
     }
@@ -203,7 +200,11 @@ mod tests {
     fn anchors_map_sections_and_refs_to_their_files() {
         let mut doc = Document::default();
         // s000: section "1" with nested "1.1".
-        doc.sections.push(section("1", "intro", vec![section("1.1", "purpose", vec![])]));
+        doc.sections.push(section(
+            "1",
+            "intro",
+            vec![section("1.1", "purpose", vec![])],
+        ));
         // s001: a references section carrying a bibliography anchor.
         let mut refs = section("2", "references", vec![]);
         refs.blocks.push(Block::DefinitionList(vec![DefEntry {
@@ -216,13 +217,24 @@ mod tests {
         let map = build_anchors(&doc);
         assert_eq!(map.get("intro").map(String::as_str), Some("s000.xhtml"));
         assert_eq!(map.get("purpose").map(String::as_str), Some("s000.xhtml"));
-        assert_eq!(map.get("references").map(String::as_str), Some("s001.xhtml"));
+        assert_eq!(
+            map.get("references").map(String::as_str),
+            Some("s001.xhtml")
+        );
         assert_eq!(map.get("RFC2119").map(String::as_str), Some("s001.xhtml"));
     }
 
     #[test]
     fn toc_children_nest_and_point_at_in_file_anchors() {
-        let sec = section("1", "intro", vec![section("1.1", "purpose", vec![section("1.1.1", "deep", vec![])])]);
+        let sec = section(
+            "1",
+            "intro",
+            vec![section(
+                "1.1",
+                "purpose",
+                vec![section("1.1.1", "deep", vec![])],
+            )],
+        );
         let children = toc_children(&sec, "s000.xhtml");
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].url, "s000.xhtml#purpose");
