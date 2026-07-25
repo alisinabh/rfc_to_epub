@@ -236,11 +236,11 @@ fn cached(filename: &str, url: &str, cache_dir: Option<&Path>) -> Result<Option<
     if let Some(dir) = cache_dir {
         let path = dir.join(filename);
         if path.exists() {
-            let body = std::fs::read_to_string(&path).map_err(|source| Error::Io {
+            let bytes = std::fs::read(&path).map_err(|source| Error::Io {
                 path: path.clone(),
                 source,
             })?;
-            return Ok(Some(body));
+            return Ok(Some(decode_body(bytes)));
         }
     }
     let Some(body) = http_get(url)? else {
@@ -263,16 +263,28 @@ fn http_get(url: &str) -> Result<Option<String>> {
     if !(200..300).contains(&status) {
         return Err(Error::Parse(format!("unexpected HTTP {status} for {url}")));
     }
-    let body = resp
+    let bytes = resp
         .body_mut()
         .with_config()
         .limit(BODY_LIMIT)
-        .read_to_string()
+        .read_to_vec()
         .map_err(|source| Error::Http {
             url: url.to_string(),
             source: Box::new(source),
         })?;
-    Ok(Some(body))
+    Ok(Some(decode_body(bytes)))
+}
+
+/// Decode a fetched source. RFC text predating the RFC Editor's UTF-8 policy is
+/// ISO-8859-1 — RFC 64 carries a lone `0xB5` (`µ`) — and the server declares
+/// `charset=utf-8` for every `.txt` regardless, so the encoding has to be
+/// sniffed: valid UTF-8 wins, otherwise each byte maps 1:1 to its Latin-1
+/// codepoint. That fallback is total, so decoding never fails.
+fn decode_body(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => e.into_bytes().iter().map(|&b| b as char).collect(),
+    }
 }
 
 /// GET a URL as raw bytes (for images). `Ok(None)` on 404.
@@ -434,6 +446,38 @@ mod tests {
             "x".repeat(4000)
         );
         assert!(is_xml_v3(&xml));
+    }
+
+    #[test]
+    fn decode_body_prefers_utf8_over_latin1() {
+        assert_eq!(decode_body(b"plain ascii".to_vec()), "plain ascii");
+        // Valid UTF-8 decodes as UTF-8, not as its two Latin-1 bytes.
+        assert_eq!(
+            decode_body("12 \u{b5}sec".as_bytes().to_vec()),
+            "12 \u{b5}sec"
+        );
+        // A bare 0xB5 is not valid UTF-8; Latin-1 maps it to the same char.
+        assert_eq!(decode_body(b"12 \xb5sec".to_vec()), "12 \u{b5}sec");
+        assert_eq!(decode_body(Vec::new()), "");
+    }
+
+    #[test]
+    fn reads_latin1_cached_source() {
+        // RFC 64 is ISO-8859-1: a lone 0xB5 (`µ`) in "12 µsec per double word".
+        // Strict UTF-8 decoding rejects it and the whole conversion fails.
+        let dir = std::env::temp_dir().join(format!("rfc2epub-latin1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("rfc64.txt");
+        std::fs::write(
+            &path,
+            b"This takes approximately 12 \xb5sec per double word.\n",
+        )
+        .unwrap();
+        let body = cached("rfc64.txt", "http://example.invalid/rfc64.txt", Some(&dir))
+            .expect("latin-1 cached source should decode")
+            .expect("cached file should be found");
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(body.contains("12 \u{b5}sec"), "got {body:?}");
     }
 
     #[test]
