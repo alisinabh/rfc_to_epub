@@ -1,4 +1,9 @@
 /target
 *.epub
 
+# Scratch dirs used by scripts/site.py and the Pages workflow.
+/work
+/site
+/out
+
 # Cargo.lock is committed: this workspace ships a binary (reproducible builds).

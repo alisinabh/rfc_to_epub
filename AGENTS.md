@@ -112,12 +112,56 @@ do not flip the default), `cover.rs` (SVG→PNG cover via `resvg` + bundled Robo
   `parse_source`, `Options`); the CLI in `crates/rfc2epub-cli` is a thin clap
   wrapper over it.
 
+## Publishing pipeline (`scripts/`, `web/`, `.github/workflows/pages.yml`)
+
+Separate from the library: a weekly job converts **every** RFC and publishes the
+results at `https://alisinabh.github.io/rfc_to_epub/`. It touches no Rust — it
+only drives the CLI — and the load-bearing ideas are worth knowing before
+changing it:
+
+- **EPUBs live in Releases, not on Pages.** The full corpus measures **~976 MB**
+  (measured over 100 random RFCs: ~97 KB mean, of which **71% is the cover
+  PNG**), which is effectively the 1 GB Pages cap. So the `.epub` files are
+  Release assets — no size ceiling, and they don't count toward repo size —
+  while `gh-pages` carries only the search page and its ~1 MB index. Re-measure
+  before assuming this still fits anywhere.
+- **The releases are the incremental state.** What is already uploaded is what
+  does not get reconverted; the workflow lists assets, diffs, and converts the
+  remainder. RFC files are immutable once published, so a normal week converts a
+  handful of documents and a failed run self-heals on the next one. There is no
+  checkpoint file to keep in sync.
+- **Sources come from `rsync.rfc-editor.org::rfcs`, not HTTP.** The rsync
+  filenames (`rfc9110.txt`, `rfc9110.xml`) are byte-identical to what
+  `fetch.rs::fetch_rfc_kind` looks for in its cache, so the workflow pins
+  `XDG_CACHE_HOME`, hard-links the mirror into the cache, and conversion then
+  makes **zero** HTTP requests. One connection replaces ~11,000.
+- **Two release families, deliberately distinct prefixes.** `epubs-NNNNN` holds
+  the individual files, one release per **500** RFCs (GitHub allows 1,000 assets
+  per release). `archive-<timestamp>` holds the download-all zip, newest two
+  kept. The prune step matches `^archive-` — that prefix split is the only thing
+  stopping it from deleting the corpus.
+- **`BUCKET_SIZE` lives in two files.** `scripts/site.py` names the release,
+  `web/app.js` rebuilds the same URL from `meta.json`'s `epubBase`. Change one
+  and every download link 404s; change both together.
+- **`epubBase` is a host switch.** It is joined with `NNNNN/rfcN.epub`, so the
+  same page works against a release prefix or a plain `epub/` directory on
+  Pages, with no other edits.
+- RFC numbers passed 10000 in 2026. Nothing may zero-pad them or assume four
+  digits, and sorting is numeric.
+
+`scripts/site.py` is stdlib-only Python with five subcommands (`index`,
+`buckets`, `plan`, `place`, `build`); `web/` is hand-written HTML/CSS/JS copied
+verbatim to the branch. `rfcs.json` rows are
+`[number, title, status, date, hasEpub, hasTextSource]` — the last flag is what
+lets the page distinguish "not converted yet" from the seven PDF-only RFCs.
+
 ## Roadmap
 
-`docs/deferred-work.md` tracks the remaining intentionally-deferred items. The
-big ones have now shipped — **MediaWiki BIP parser**, **in-process mermaid**
-(merman), **BOLT fetching**, **raw-HTML tables/`<details>`**, and **untagged-fence
-sniffing**. Still deferred: **`--math svg`** (no dependable pure-Rust LaTeX→SVG
-engine — `ratex` is 0.0.1) and small polish (GIF→PNG frame-1, manifest
-`mathml`/`svg` properties). `docs/markdown-support-research.md` is the original
-research. Check these before starting collection/parser work.
+The remaining intentionally-deferred items: **`--math svg`** (no dependable
+pure-Rust LaTeX→SVG engine — `ratex` is 0.0.1) and small polish (GIF→PNG
+frame-1, manifest `mathml`/`svg` properties). The big ones have all shipped —
+**MediaWiki BIP parser**, **in-process mermaid** (merman), **BOLT fetching**,
+**raw-HTML tables/`<details>`**, and **untagged-fence sniffing**. The original
+`docs/deferred-work.md` and `docs/markdown-support-research.md` were removed in
+`341c168`; recover them with `git show 153c090:docs/deferred-work.md` if the
+detail is needed.

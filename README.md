@@ -29,6 +29,13 @@ Documents are named by a bare RFC number (`9110`) or a collection-qualified id
 now live in the ERCs repo are followed automatically (the EIPs repo keeps a
 `status: Moved` tombstone that redirects the fetch).
 
+## Pre-built RFCs
+
+Don't want to install anything? Every IETF RFC is already converted and waiting
+at **<https://alisinabh.github.io/rfc_to_epub/>** — search by number or title,
+download one, or grab the lot as a single ZIP. A weekly job reconverts whatever
+is new, so RFCs published this week appear at the top of the page on their own.
+
 ## Why EPUB?
 
 EPUB is an open W3C standard — mechanically just a ZIP of XHTML + CSS — and it

@@ -1,0 +1,294 @@
+# Convert every IETF RFC to EPUB, publish the files as Release assets, and
+# publish a search page for them on GitHub Pages.
+#
+# Why the split: the full corpus measures ~976 MB, which is essentially the 1 GB
+# GitHub Pages cap. So the EPUBs live as Release assets — no size ceiling, and
+# they do not count toward repository size — while Pages carries only the search
+# page and its ~1 MB index.
+#
+# The releases double as the incremental state: whatever is already uploaded is
+# what does not need reconverting. RFC files are immutable once published, so a
+# weekly run converts only the handful of RFCs that appeared that week. Statuses
+# do change, so the search index is regenerated from a fresh rfc-index.xml on
+# every run regardless.
+#
+# Two release families, deliberately distinct prefixes so the archive pruning
+# below can never touch the EPUBs:
+#   epubs-NNNNN            one per 500 RFCs, holding the individual .epub files
+#   archive-YYYYmmdd-HHMMSS  the "download all" zip, newest two kept
+#
+# Pages is configured as "Deploy from a branch" (gh-pages / root).
+name: Publish RFC EPUBs
+
+on:
+  schedule:
+    # Mondays, deliberately off the hour: on-the-hour cron is the most likely
+    # to be delayed or dropped by GitHub.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Max RFCs to convert this run (0 = no cap)'
+        required: false
+        default: '0'
+      rebuild:
+        description: 'Reconvert and replace everything, not just what is missing'
+        type: choice
+        options: ['none', 'all']
+        default: 'none'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # fetch.rs resolves its download cache through the `directories` crate, which
+  # on Linux is $XDG_CACHE_HOME/rfc2epub. Pinning it here lets us pre-populate
+  # the cache from rsync so conversion makes no HTTP requests at all.
+  XDG_CACHE_HOME: ${{ github.workspace }}/work/cache
+  GH_TOKEN: ${{ github.token }}
+  LIMIT: ${{ inputs.limit || '0' }}
+  REBUILD: ${{ inputs.rebuild || 'none' }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build converter
+        run: cargo build --release -p rfc2epub-cli
+
+      - name: Mirror RFC sources
+        run: |
+          set -euo pipefail
+          mkdir -p work/src "$XDG_CACHE_HOME/rfc2epub"
+          # rsync is the RFC Editor's own sanctioned bulk mechanism: one
+          # connection, incremental across runs, no rate-limit guesswork. The
+          # filter keeps this to text + XML + the index (~730 MB), skipping the
+          # PDF/PS/JSON variants we have no use for.
+          rsync -rt --no-motd \
+            --include='rfc-index.xml' \
+            --include='rfc[0-9]*.txt' \
+            --include='rfc[0-9]*.xml' \
+            --exclude='*' \
+            rsync.rfc-editor.org::rfcs work/src/
+          # Hard-link rather than copy: same filesystem, and it keeps a second
+          # 730 MB off the runner's disk. The rsync filenames are byte-identical
+          # to what fetch.rs looks for in its cache (rfc9110.txt / rfc9110.xml).
+          cp -al work/src/rfc*.txt work/src/rfc*.xml "$XDG_CACHE_HOME/rfc2epub/"
+          du -sh work/src
+
+      - name: Read the index
+        run: python3 scripts/site.py index --index-xml work/src/rfc-index.xml --out work/meta.json
+
+      - name: List what is already published
+        run: |
+          set -euo pipefail
+          : > work/existing.txt
+          python3 scripts/site.py buckets --meta work/meta.json > work/buckets.txt
+          while read -r b; do
+            # A bucket with no release yet simply contributes nothing.
+            gh release view "epubs-$b" --json assets --jq '.assets[].name' \
+              >> work/existing.txt 2>/dev/null || true
+          done < work/buckets.txt
+          echo "already published: $(wc -l < work/existing.txt)"
+
+      - name: Plan the work
+        id: plan
+        run: |
+          set -euo pipefail
+          rebuild_flag=""
+          if [ "$REBUILD" = "all" ]; then rebuild_flag="--rebuild-all"; fi
+          python3 scripts/site.py plan \
+            --meta work/meta.json --existing work/existing.txt \
+            --out work/todo --limit "$LIMIT" $rebuild_flag | tee work/plan.json
+          echo "todo=$(jq -r .todo work/plan.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Convert
+        if: steps.plan.outputs.todo != '0'
+        run: |
+          set -uo pipefail
+          mkdir -p out
+          bin="$PWD/target/release/rfc2epub"
+          # `|| true` is load-bearing: the CLI exits 1 if ANY document in a
+          # batch fails, which must not abort the whole run. What actually
+          # landed is reconciled from the output directory below.
+          xargs -r -P 4 -n 20 "$bin" -q -f text -d out < work/todo/todo.text.txt || true
+          xargs -r -P 4 -n 20 "$bin" -q -f auto -d out < work/todo/todo.auto.txt || true
+          echo "converted: $(find out -name '*.epub' | wc -l)"
+
+      - name: Group EPUBs by release bucket
+        id: place
+        run: |
+          set -euo pipefail
+          python3 scripts/site.py place \
+            --out-dir out --dest work/upload --todo work/todo \
+            --added work/added.txt --failed work/failed.txt | tee work/place.json
+          echo "placed=$(jq -r .placed work/place.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload EPUBs to their releases
+        if: steps.place.outputs.placed != '0'
+        run: |
+          set -euo pipefail
+          # Only a full rebuild replaces assets that already exist; a normal run
+          # converts strictly what was missing, so nothing can collide.
+          clobber=""
+          if [ "$REBUILD" = "all" ]; then clobber="--clobber"; fi
+
+          upload_bucket() {
+            local dir="$1" b tag
+            b="$(basename "$dir")"
+            tag="epubs-$b"
+            gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" \
+              --title "RFC EPUBs $b" \
+              --notes "Individual RFC EPUBs for RFC $((10#$b))-$((10#$b + 499)), generated by rfc2epub."
+            # shellcheck disable=SC2086
+            gh release upload "$tag" $clobber "$dir"*.epub
+            echo "uploaded $(find "$dir" -name '*.epub' | wc -l) to $tag"
+          }
+
+          # Four buckets at a time: the bootstrap uploads ~9,800 assets and a
+          # serial pass would dominate the job. An upload that fails here is not
+          # fatal — the next step re-reads the releases, so a missing asset just
+          # shows as "no EPUB" and gets reconverted next run.
+          n=0
+          for dir in work/upload/*/; do
+            upload_bucket "$dir" || echo "::warning::upload failed for $dir" &
+            n=$((n + 1))
+            if [ $((n % 4)) -eq 0 ]; then wait; fi
+          done
+          wait
+
+      - name: List what is published now
+        run: |
+          set -euo pipefail
+          : > work/published.txt
+          while read -r b; do
+            gh release view "epubs-$b" --json assets --jq '.assets[].name' \
+              >> work/published.txt 2>/dev/null || true
+          done < work/buckets.txt
+          echo "published now: $(wc -l < work/published.txt)"
+
+      - name: Refresh the download-all archive
+        id: zip
+        if: steps.place.outputs.placed != '0'
+        run: |
+          set -euo pipefail
+          rm -f rfc-epubs.zip
+          prev="$(gh release list --limit 100 --json tagName --jq '.[].tagName' \
+                  | grep '^archive-' | sort -r | head -n1 || true)"
+          if [ -n "$prev" ]; then
+            # Grow the previous archive rather than re-downloading every asset:
+            # this is the only bulk transfer left in the workflow.
+            gh release download "$prev" --pattern 'rfc-epubs.zip' --dir .
+          fi
+          # -0 (store): the EPUBs are already deflated, so recompressing costs
+          # minutes and saves nothing. -j: a flat archive is friendlier to
+          # unzip into a reader's library than nested bucket directories.
+          zip -0 -qjur rfc-epubs.zip work/upload/*/*.epub
+
+          # The archive must hold every published EPUB, not just this run's. If
+          # it falls short — no previous archive to grow, or a pruned one — pull
+          # the assets down and rebuild it from scratch rather than shipping a
+          # "download all" button that quietly omits most of the corpus.
+          want=$(wc -l < work/published.txt)
+          got=$(unzip -Z1 rfc-epubs.zip | grep -c '\.epub$' || true)
+          if [ "$got" -lt "$want" ]; then
+            echo "archive has $got of $want EPUBs — rebuilding it from the releases"
+            rm -f rfc-epubs.zip
+            mkdir -p work/all
+            while read -r b; do
+              gh release download "epubs-$b" --pattern '*.epub' --dir work/all --skip-existing \
+                >/dev/null 2>&1 || true
+            done < work/buckets.txt
+            zip -0 -qjr rfc-epubs.zip work/all
+            got=$(unzip -Z1 rfc-epubs.zip | grep -c '\.epub$' || true)
+            rm -rf work/all
+          fi
+          echo "archive holds $got of $want published EPUBs"
+
+          tag="archive-$(date -u +%Y%m%d-%H%M%S)"
+          # A fresh tag every time, never `--clobber`: clobber deletes the
+          # existing asset before uploading its replacement, which would leave
+          # the download button dead for the length of a ~1 GB upload.
+          gh release create "$tag" \
+            --title "All RFC EPUBs — $(date -u +%Y-%m-%d)" \
+            --notes "Every IETF RFC as an EPUB, in one archive. Generated by rfc2epub." \
+            rfc-epubs.zip
+          echo "url=https://github.com/${{ github.repository }}/releases/download/$tag/rfc-epubs.zip" >> "$GITHUB_OUTPUT"
+          # Keep the two most recent archives; older ones are dead weight. The
+          # `archive-` prefix is why this can never delete an `epubs-` release.
+          gh release list --limit 100 --json tagName --jq '.[].tagName' \
+            | grep '^archive-' | sort -r | tail -n +3 \
+            | xargs -r -n1 gh release delete --yes --cleanup-tag
+          rm -f rfc-epubs.zip
+
+      - name: Check out the site branch
+        run: |
+          set -euo pipefail
+          url="https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads "$url" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "$url" site
+          else
+            # First run: actions/checkout would hard-fail on a missing ref, and
+            # Pages cannot be pointed at a branch that does not exist yet.
+            echo "gh-pages does not exist yet — starting an orphan branch"
+            mkdir -p site
+            git -C site init -q -b gh-pages
+            git -C site remote add origin "$url"
+          fi
+          git -C site config user.name  'github-actions[bot]'
+          git -C site config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Build the site
+        run: |
+          set -euo pipefail
+          python3 scripts/site.py build \
+            --meta work/meta.json --published work/published.txt \
+            --site site --web web --added work/added.txt \
+            --zip-url "${{ steps.zip.outputs.url }}" \
+            --epub-base "https://github.com/${{ github.repository }}/releases/download/epubs-"
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          cd site
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+          else
+            git commit -q -m "Update site ($(date -u +%Y-%m-%d))"
+            git push -q origin HEAD:gh-pages
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### RFC EPUB publish"
+            echo
+            echo "- Converted this run: **${{ steps.place.outputs.placed || 0 }}**"
+            echo "- Total published: **$(wc -l < work/published.txt 2>/dev/null || echo 0)**"
+            echo "- Site payload: **$(du -sh --exclude=.git site 2>/dev/null | cut -f1 || echo n/a)** (GitHub Pages caps a published site at 1 GB)"
+            if [ -s work/failed.txt ]; then
+              echo "- Failed to convert: **$(wc -l < work/failed.txt)**"
+              echo
+              echo '<details><summary>Failed RFC numbers</summary>'
+              echo
+              echo '```'
+              cat work/failed.txt
+              echo '```'
+              echo
+              echo '</details>'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
