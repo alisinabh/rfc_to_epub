@@ -51,12 +51,12 @@ fetch (rfc-editor.org, cached) → parse → IR → render XHTML → assemble EP
 The key idea is a single intermediate representation (IR) produced by several
 parsers and consumed by one renderer:
 
-| Input | When used | Fidelity |
-|-------|-----------|----------|
-| **xml2rfc v3** | Modern RFCs (~2020+) that publish canonical XML | High — real section/prose/artwork/code structure |
-| **Plain text** | Everything older (e.g. RFC 791) | Heuristic reconstruction; diagrams kept verbatim |
-| **Markdown (GFM)** | EIPs, ERCs, CAIPs, BOLTs, and Markdown BIPs | High — full AST, GitHub-compatible anchors, images/highlighting/math |
-| **MediaWiki** | The ~93% of BIPs still in `.mediawiki` (Taproot, SegWit, BIP-32/39…) | Good — hand-rolled subset: headings, tables, `<ref>` footnotes, `<source>` code, images, emphasis |
+| Input              | When used                                                            | Fidelity                                                                                          |
+| ------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| **xml2rfc v3**     | Modern RFCs (~2020+) that publish canonical XML                      | High — real section/prose/artwork/code structure                                                  |
+| **Plain text**     | Everything older (e.g. RFC 791)                                      | Heuristic reconstruction; diagrams kept verbatim                                                  |
+| **Markdown (GFM)** | EIPs, ERCs, CAIPs, BOLTs, and Markdown BIPs                          | High — full AST, GitHub-compatible anchors, images/highlighting/math                              |
+| **MediaWiki**      | The ~93% of BIPs still in `.mediawiki` (Taproot, SegWit, BIP-32/39…) | Good — hand-rolled subset: headings, tables, `<ref>` footnotes, `<source>` code, images, emphasis |
 
 The IR is format-neutral: only [`Collection`](crates/rfc2epub/src/model.rs)
 knows how an id is spelled and where it lives on the web. RFC output is byte-for-
@@ -110,8 +110,8 @@ are done at **build time** (EPUB readers run no JavaScript):
   EPUB resources; `<img>` links are rewritten to the in-book copy. Downloads that
   fail degrade to the image's alt text rather than breaking the build.
 - **Fenced code** is syntax-highlighted into class-based `<span>`s (via `syntect`
-  + `two-face`, so Solidity, TypeScript, JSON, Python, … all work), styled by an
-  embedded stylesheet that adapts to light, dark, and grayscale e-ink.
+  - `two-face`, so Solidity, TypeScript, JSON, Python, … all work), styled by an
+    embedded stylesheet that adapts to light, dark, and grayscale e-ink.
 - **Math** (`$…$` / `$$…$$`) is converted to **MathML Core** with the original
   LaTeX kept as `alttext`. Apple Books, Kobo, KOReader, and Calibre render it;
   Kindle's support is inconsistent (a known reader limitation).
@@ -121,7 +121,7 @@ Markdown BIPs use) is parsed as ordered RFC-822 headers per EIP-1 / BIP-3: the
 id, title, authors (with GitHub/email links), status, and `requires`/`replaces`
 relations map to first-class fields; anything else becomes a metadata table on
 the title page. In-document `#section` links resolve to in-book anchors (the
-GitHub-compatible slugs match), and links to *other* documents (`./eip-2718.md`)
+GitHub-compatible slugs match), and links to _other_ documents (`./eip-2718.md`)
 become canonical web links, since an EPUB holds a single document.
 
 Both **Markdown and MediaWiki BIPs** are supported: the fetcher probes
@@ -230,4 +230,4 @@ Contributions and bug reports on specific documents are welcome.
 
 ## License
 
-MIT OR Apache-2.0
+MIT
