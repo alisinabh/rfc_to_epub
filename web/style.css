@@ -30,6 +30,28 @@ body {
 }
 
 h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+
+/* Title and the repo link share a row, and wrap to two on narrow screens. */
+.titlebar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+/* A plain link rather than GitHub's button widget: that widget is a
+   third-party iframe, and this page otherwise makes no external requests. */
+.star {
+  padding: .3rem .65rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: .85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.star:hover { border-color: var(--link); background: var(--accent-bg); }
 p { margin: .5rem 0; }
 a { color: var(--link); }
 
