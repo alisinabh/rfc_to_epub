@@ -7,23 +7,37 @@ item lists **current state**, **why it was deferred**, a **concrete approach**
 with the exact integration points in today's code, an **effort** estimate, and
 **risks**.*
 
+## Status (updated after the follow-up implementation pass)
+
+Most of this roadmap has now **shipped**. What remains genuinely deferred is the
+`--math svg` mode (item 4) and two of the polish items (6a GIF→PNG, 6c manifest
+properties). See the per-item notes below.
+
 ## Priority roadmap
 
-| # | Item | Unlocks | Effort | Priority |
-|---|------|---------|--------|----------|
-| 1 | MediaWiki BIP parser | ~93% of BIPs (Taproot 341, SegWit 141, BIP-32/39…) | M–L | **High** |
-| 2 | In-process mermaid (merman) | 3 ERCs today; future diagram-heavy specs | M | Medium |
-| 3 | BOLT fetching | Lightning BOLTs (parser already works) | S | Medium |
-| 4 | `--math svg` mode | Reliable math on Kindle | M | Low–Med |
-| 5 | Raw-HTML `<table>` → real tables | ~40 EIP files with inline tables | S–M | Low |
-| 6 | GIF → PNG frame-1, untagged-fence sniffing, manifest `mathml`/`svg` property | Polish / epubcheck | S each | Low |
+| # | Item | Unlocks | Effort | Status |
+|---|------|---------|--------|--------|
+| 1 | MediaWiki BIP parser | ~93% of BIPs (Taproot 341, SegWit 141, BIP-32/39…) | M–L | ✅ **Done** — `parse/mediawiki.rs` |
+| 2 | In-process mermaid (merman) | 3 ERCs today; future diagram-heavy specs | M | ✅ **Done** — `diagram.rs`, default `mermaid` feature (MSRV → 1.95) |
+| 3 | BOLT fetching | Lightning BOLTs (parser already works) | S | ✅ **Done** — `model::bolt_filename` + `fetch::fetch_bolt` |
+| 4 | `--math svg` mode | Reliable math on Kindle | M | ⏸ **Deferred** — no dependable pure-Rust LaTeX→SVG engine (`ratex` is 0.0.1) |
+| 5 | Raw-HTML `<table>` → real tables | ~40 EIP files with inline tables | S–M | ✅ **Done** — `markdown::parse_html_table` + `<details>`→aside |
+| 6 | GIF → PNG frame-1, untagged-fence sniffing, manifest `mathml`/`svg` property | Polish / epubcheck | S each | ◐ **Partial** — 6b (fence sniffing) done; 6a/6c deferred |
 
-The IR and pipeline were built so every item below is *additive* — none require
-reworking `model.rs` or the renderer.
+The IR and pipeline were built so every item below is *additive* — none required
+reworking `model.rs` or the renderer, and none did.
 
 ---
 
 ## 1. MediaWiki BIP parser
+
+> **✅ Done.** Implemented as `parse/mediawiki.rs` (hand-rolled subset, route B).
+> `parse::parse` dispatches `SourceKind::Mediawiki` to it; the preamble → metadata
+> mapping was extracted into `parse/preamble.rs::apply_preamble` and is shared with
+> the Markdown parser; `lib::convert` now runs `assets::resolve` for any source with
+> an `asset_base` (Markdown *and* MediaWiki). Inline `<ref>`/`<code>`/`<nowiki>` are
+> lifted into placeholders before emphasis pairing so a stray `''` never swallows a
+> `<ref>`. Validated end-to-end against real BIPs (341, 141, 32, 39, 173, 152, 340).
 
 **Current state.** `fetch::fetch_bip` probes `bip-NNNN.md` then
 `bip-NNNN.mediawiki` and tags the latter `SourceKind::Mediawiki`.
@@ -80,6 +94,19 @@ Markdown footnote scheme already in the renderer.
 
 ## 2. In-process mermaid rendering (merman)
 
+> **✅ Done.** Implemented as `diagram.rs`, a post-parse pass run from
+> `lib::convert` and the CLI `--input` path (keeping `parse_source` pure). Uses
+> `merman`'s `render_svg_resvg_safe_sync` (export-safe, no `<foreignObject>`) with
+> a guardrail that rejects any `<foreignObject>` that slips through. Behind the
+> **default `mermaid` Cargo feature** (bumped workspace MSRV 1.85 → 1.95, merman's
+> floor); `--no-default-features` falls back to verbatim source. Sources are
+> normalized first (a `%%` comment before the diagram-type line breaks mermaid).
+> The **Kroki** network fallback (step 2 of the chain) is implemented as opt-in
+> (`--online-mermaid` / `Options.mermaid_online`) for diagrams merman can't parse
+> — e.g. erc-5883's sequence diagram uses actor names with spaces, which real
+> mermaid accepts but merman rejects. `mmdc` was not needed. Validated on erc-7715
+> (merman) and erc-5883 (Kroki).
+
 **Current state.** `parse/markdown.rs::code_block` maps a ` ```mermaid ` fence to
 `Block::Diagram { svg: String::new(), source }`. The renderer
 (`render/xhtml.rs::render_block`) already branches: non-empty `svg` → inline
@@ -117,6 +144,11 @@ alpha — parity gaps on dense diagrams; keep the code-block fallback wired.
 
 ## 3. BOLT fetching
 
+> **✅ Done.** Route (a): a stable number→filename map, `model::bolt_filename`
+> (also used by `Collection::external_url` for correct cross-ref links), plus
+> `fetch::fetch_bolt` against the bolts repo root as `asset_base`. Validated on
+> bolt-11 and bolt-3.
+
 **Current state.** `Collection::Bolt` exists and the Markdown parser handles
 BOLT files fine (plain GFM, no frontmatter). `fetch::fetch` returns
 `Error::Unsupported("fetching BOLTs is not yet supported; use --input")`.
@@ -135,6 +167,13 @@ a comment to update it when BOLTs are added. `asset_base` = the bolts repo root.
 ---
 
 ## 4. `--math svg` mode (Kindle-reliable math)
+
+> **⏸ Deferred (blocked on a dependency).** The only pure-Rust LaTeX→SVG engine,
+> RaTeX, is published as `ratex` **0.0.1** — far too immature to depend on. The
+> approach below (a `--math <mathml|svg>` flag → `Options.math_mode` threaded into
+> the parser, SVG math flowing through the existing inline-SVG machinery) still
+> holds; it just needs a dependable engine first. MathML Core remains the default
+> and is correct for Apple Books / Kobo / KOReader / Calibre.
 
 **Current state.** Math is always MathML Core (`mathml.rs`), which renders in
 Apple Books/Kobo/KOReader/Calibre but is inconsistent on Kindle.
@@ -156,6 +195,12 @@ maturity; SVG math loses selectable text.
 
 ## 5. Raw-HTML `<table>` → real tables
 
+> **✅ Done.** `markdown::html_block` now tries `parse_html_table` (via `roxmltree`,
+> after light sanitizing — self-closing void tags, entity/`&` neutralization) and
+> emits `Block::Table`, failing soft to tag-stripping. `<details>`/`<summary>` map
+> to `Block::Aside` (handling comrak's habit of splitting `<details>` across
+> multiple HTML blocks). Cell inlines reuse the Markdown link resolver.
+
 **Current state.** `parse/markdown.rs::html_block` strips tags to text (`<sup>`,
 `<sub>`, `<br>` inline cases are handled; block-level `<table>`/`<details>`
 degrade to a text paragraph). ~40 EIP files embed a raw `<table>`.
@@ -171,6 +216,12 @@ roxmltree attempt must fail soft.
 ---
 
 ## 6. Smaller polish
+
+> **◐ Partial.** 6b (untagged-fence language sniffing) is **done** —
+> `markdown::sniff_language` conservatively routes obvious JSON and Solidity fences
+> to the highlighter. 6a (GIF→PNG) and 6c (manifest properties) remain **deferred**
+> — both low value (GIF is a valid EPUB3 core media type; the manifest-property gap
+> is an `epub-builder` limitation readers don't care about).
 
 - **GIF → PNG frame-1.** `assets.rs` currently passes GIFs through as
   `image/gif` (a valid EPUB3 core media type, so this is fine). If a reader
@@ -188,10 +239,14 @@ roxmltree attempt must fail soft.
 
 ## Suggested order
 
-1. **MediaWiki BIPs** — by far the biggest coverage win, and the plumbing is
-   already in place.
-2. **BOLT fetching** — nearly free once someone wants BOLTs.
-3. **mermaid via merman** — when it stabilizes past alpha, or if a target spec
-   leans on diagrams.
-4. **`--math svg`** — only if Kindle testing proves MathML inadequate in practice.
-5. Table/HTML and polish items as they surface on real documents.
+Items 1, 2, 3, 5, and 6b have been implemented (see the status markers above).
+What's left, in priority order:
+
+1. **`--math svg`** — only once a dependable pure-Rust LaTeX→SVG engine exists
+   (RaTeX is 0.0.1 today) and if Kindle testing proves MathML inadequate.
+2. Remaining polish (6a GIF→PNG, 6c manifest `mathml`/`svg` properties) as they
+   surface on real documents.
+
+Note on merman: pinned at `0.7.0` (its `render` feature pulls `merman-render`
+0.7.0). It is alpha-lineage — watch for parity gaps on dense diagrams; the
+verbatim-source fallback stays wired for anything that fails to render.

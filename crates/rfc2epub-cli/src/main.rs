@@ -49,6 +49,11 @@ struct Cli {
     #[arg(long)]
     no_cache: bool,
 
+    /// Render mermaid diagrams the in-process engine can't handle via the Kroki
+    /// service (sends the diagram source to https://kroki.io).
+    #[arg(long)]
+    online_mermaid: bool,
+
     /// Suppress progress output.
     #[arg(short, long)]
     quiet: bool,
@@ -111,6 +116,7 @@ fn run(cli: Cli) -> Result<()> {
         },
         svg_mode: cli.svg_mode.into(),
         page_breaks: !cli.no_page_breaks,
+        mermaid_online: cli.online_mermaid,
     };
 
     if let Some(input) = &cli.input {
@@ -124,7 +130,11 @@ fn run(cli: Cli) -> Result<()> {
         .map(|raw| {
             DocSpec::parse(raw)
                 .map(|s| (raw.clone(), s))
-                .ok_or_else(|| anyhow::anyhow!("unrecognized document id '{raw}' (try 9110, eip-1559, bip-341)"))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unrecognized document id '{raw}' (try 9110, eip-1559, bip-341)"
+                    )
+                })
         })
         .collect::<Result<_>>()?;
 
@@ -170,13 +180,16 @@ fn convert_local(
     opts: &Options,
     quiet: bool,
 ) -> Result<()> {
-    let body = std::fs::read_to_string(input)
-        .with_context(|| format!("reading {}", input.display()))?;
+    let body =
+        std::fs::read_to_string(input).with_context(|| format!("reading {}", input.display()))?;
     let kind = sniff_kind(input, &body);
 
     let spinner = spinner(quiet, &format!("Converting {}", input.display()));
-    let doc = rfc2epub::parse_source(&body, kind, None)
+    let mut doc = rfc2epub::parse_source(&body, kind, None)
         .with_context(|| format!("parsing {}", input.display()))?;
+    // Render any mermaid diagrams in place (in-process; `--online-mermaid` adds
+    // the opt-in Kroki fallback).
+    rfc2epub::diagram::resolve(&mut doc, opts.mermaid_online);
     let bytes = rfc2epub::render::to_epub(&doc, opts.svg_mode, opts.page_breaks)
         .context("rendering EPUB")?;
 
@@ -188,7 +201,11 @@ fn convert_local(
         std::fs::create_dir_all(parent).ok();
     }
     std::fs::write(&out, bytes).with_context(|| format!("writing {}", out.display()))?;
-    finish_ok(&spinner, quiet, &format!("{} → {}", input.display(), out.display()));
+    finish_ok(
+        &spinner,
+        quiet,
+        &format!("{} → {}", input.display(), out.display()),
+    );
     Ok(())
 }
 

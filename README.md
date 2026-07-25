@@ -48,7 +48,8 @@ parsers and consumed by one renderer:
 |-------|-----------|----------|
 | **xml2rfc v3** | Modern RFCs (~2020+) that publish canonical XML | High — real section/prose/artwork/code structure |
 | **Plain text** | Everything older (e.g. RFC 791) | Heuristic reconstruction; diagrams kept verbatim |
-| **Markdown (GFM)** | EIPs, ERCs, CAIPs, and Markdown BIPs | High — full AST, GitHub-compatible anchors, images/highlighting/math |
+| **Markdown (GFM)** | EIPs, ERCs, CAIPs, BOLTs, and Markdown BIPs | High — full AST, GitHub-compatible anchors, images/highlighting/math |
+| **MediaWiki** | The ~93% of BIPs still in `.mediawiki` (Taproot, SegWit, BIP-32/39…) | Good — hand-rolled subset: headings, tables, `<ref>` footnotes, `<source>` code, images, emphasis |
 
 The IR is format-neutral: only [`Collection`](crates/rfc2epub/src/model.rs)
 knows how an id is spelled and where it lives on the web. RFC output is byte-for-
@@ -116,10 +117,23 @@ the title page. In-document `#section` links resolve to in-book anchors (the
 GitHub-compatible slugs match), and links to *other* documents (`./eip-2718.md`)
 become canonical web links, since an EPUB holds a single document.
 
-Not yet handled: **MediaWiki** BIPs (≈93% of BIPs — a clear error points at the
-planned parser milestone; the 14 Markdown BIPs work today) and in-process
-**mermaid** rendering (diagrams fall back to their source shown verbatim, as
-GitHub did before it added mermaid support).
+Both **Markdown and MediaWiki BIPs** are supported: the fetcher probes
+`bip-NNNN.md` then `bip-NNNN.mediawiki`, and the MediaWiki parser handles the
+closed construct set BIPs actually use — `== headings ==`, `{| wiki tables |}`,
+`<ref>` footnotes, `<source lang>` highlighted code, `<pre>` blocks, images, and
+`'''bold'''`/`''italic''`/links — emitting the same IR as everything else.
+**BOLTs** (Lightning) fetch by number via a small filename map (`bolt-11`).
+
+**Mermaid** diagrams are rendered to SVG **in process** with
+[`merman`](https://crates.io/crates/merman) (pure Rust, export-safe output with
+no `<foreignObject>`, so labels survive on Kindle/`resvg`). It is the default
+`mermaid` Cargo feature; build `--no-default-features` for a leaner binary that
+shows a diagram's source verbatim instead. The source is normalized first (a
+stray `%%` comment before the diagram-type line, which mermaid rejects, is
+dropped). For the occasional diagram merman can't render but real mermaid can
+(e.g. sequence-diagram actor names with spaces), `--online-mermaid` opts into a
+network fallback that renders it via [Kroki](https://kroki.io) — off by default
+since it sends the diagram source to a third-party service.
 
 ## Usage
 
@@ -127,15 +141,16 @@ GitHub did before it added mermaid support).
 rfc2epub [OPTIONS] <DOC>...
 
 Arguments:
-  <DOC>...  Documents to convert: a bare RFC number (9110) or a
-            collection-qualified id (eip-1559, erc-20, bip-341, rfc-8446, caip-2)
+  <DOC>...  Documents to convert: a bare RFC number (9110) or a collection-qualified
+            id (eip-1559, erc-20, bip-341, bolt-11, rfc-8446, caip-2)
 
 Options:
-  --input <FILE>     Convert a local source file instead of fetching (.xml/.txt/.md)
+  --input <FILE>     Convert a local source file instead of fetching (.xml/.txt/.md/.mediawiki)
   -o, --output <FILE>  Write to this exact file (single RFC only)
   -d, --out-dir <DIR>  Output directory [default: .]
   -f, --format <auto|xml|text>  Source format preference [default: auto]
       --svg-mode <inline|card>  Diagram theme handling [default: inline]
+      --online-mermaid  Render mermaid merman can't handle via kroki.io (opt-in network)
       --no-page-breaks  Do not reproduce the source's original page breaks
       --no-cache     Do not read or write the download cache
   -q, --quiet        Suppress progress output
@@ -190,18 +205,19 @@ rfc2epub::convert_rfc(9110, "rfc9110.epub".as_ref(), &opts)?;
 ## Status & limitations
 
 Working today: RFCs via the XML path (full structure, metadata, tables, lists,
-code) and a text fallback; and Markdown spec collections (EIPs, ERCs, CAIPs, and
-the Markdown BIPs) with images, syntax highlighting, math, footnotes, and
-cross-references.
+code) and a text fallback; Markdown spec collections (EIPs, ERCs, CAIPs, BOLTs,
+Markdown BIPs) with images, syntax highlighting, math, footnotes, and
+cross-references; MediaWiki BIPs; and in-process mermaid rendering.
 
 Known rough edges in the **text** path (older RFCs), inherent to reconstructing
 structure from plain text: front matter is grouped loosely, unusual heading
 styles may be missed, and cross-references stay plain text.
 
-For **spec collections**: MediaWiki BIPs and in-process mermaid rendering are not
-yet implemented (see above); raw inline HTML beyond the common cases (`<br>`,
-`<sup>`, `<details>`) degrades to text; and MathML rendering depends on the
-reader (weakest on Kindle).
+For **spec collections**: raw block-level HTML is handled for the common cases
+(`<table>` → a real table, `<details>`/`<summary>` → an aside, `<br>`/`<sup>`)
+and anything else degrades to text; MathML rendering depends on the reader
+(weakest on Kindle) — an SVG-math mode is still deferred (no dependable pure-Rust
+LaTeX→SVG engine yet). Requires Rust ≥ 1.95 for the default `mermaid` feature.
 
 Contributions and bug reports on specific documents are welcome.
 

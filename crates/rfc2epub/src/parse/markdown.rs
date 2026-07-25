@@ -26,8 +26,7 @@ use regex::Regex;
 
 use crate::error::{Error, Result};
 use crate::model::{
-    Alignment, Author, Block, Collection, DefEntry, DocId, Document, Inline, List, Relation,
-    Section, SourceKind, Table,
+    Alignment, Block, Collection, DefEntry, Document, Inline, List, Section, SourceKind, Table,
 };
 
 /// Parse a Markdown document. `collection` is a hint from the caller (the CLI
@@ -90,7 +89,7 @@ pub fn parse(body: &str, collection: Option<Collection>, number: Option<u32>) ->
         source: SourceKind::Markdown,
         ..Default::default()
     };
-    apply_preamble(&mut doc, &preamble, collection, number);
+    super::preamble::apply_preamble(&mut doc, &preamble, collection, number);
 
     // --- Build the section tree from headings. ---
     let (mut sections, title_from_h1) = build_sections(items, &doc.title);
@@ -160,7 +159,9 @@ struct Converter {
 
 impl Converter {
     fn blocks_of<'a>(&self, node: &'a AstNode<'a>) -> Vec<Block> {
-        node.children().filter_map(|c| self.block_from_node(c)).collect()
+        node.children()
+            .filter_map(|c| self.block_from_node(c))
+            .collect()
     }
 
     fn block_from_node<'a>(&self, node: &'a AstNode<'a>) -> Option<Block> {
@@ -174,7 +175,9 @@ impl Converter {
             // degrade it to a bold paragraph so its text survives.
             NodeValue::Heading(_) => {
                 drop(ast);
-                Some(Block::Paragraph(vec![Inline::Strong(self.inlines_of(node))]))
+                Some(Block::Paragraph(vec![Inline::Strong(
+                    self.inlines_of(node),
+                )]))
             }
             NodeValue::CodeBlock(cb) => Some(code_block(&cb.info, &cb.literal)),
             NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => {
@@ -221,7 +224,8 @@ impl Converter {
             let ast = kids[0].data();
             match &ast.value {
                 NodeValue::Image(nl) => {
-                    let caption = (!nl.title.is_empty()).then(|| vec![Inline::text(nl.title.clone())]);
+                    let caption =
+                        (!nl.title.is_empty()).then(|| vec![Inline::text(nl.title.clone())]);
                     return Block::Figure {
                         resource: nl.url.clone(),
                         alt: text_of(kids[0]),
@@ -278,7 +282,11 @@ impl Converter {
                     _ => {}
                 }
             }
-            entries.push(DefEntry { anchor: None, term, description });
+            entries.push(DefEntry {
+                anchor: None,
+                term,
+                description,
+            });
         }
         Block::DefinitionList(entries)
     }
@@ -367,15 +375,29 @@ impl Converter {
     /// GitHub slugs match our section ids); relative links to *other* documents
     /// in a known collection become absolute web links (an EPUB holds one doc).
     fn resolve_link(&self, url: &str, text: Vec<Inline>) -> Inline {
-        let url = url.trim();
-        if let Some(frag) = url.strip_prefix('#') {
-            return Inline::XRef { text, target: frag.to_string() };
-        }
-        if let Some(href) = rewrite_doc_link(url) {
-            return Inline::Link { text, href };
-        }
-        let _ = self.collection;
-        Inline::Link { text, href: url.to_string() }
+        let _ = self.collection; // reserved for future collection-aware resolution
+        resolve_link(url, text)
+    }
+}
+
+/// Resolve a link URL to an inline (the collection-independent core of
+/// [`Converter::resolve_link`], reused by the raw-HTML table pass): a `#anchor`
+/// becomes a cross-reference, a relative other-document link rewrites to its
+/// canonical web URL, and anything else stays an external link.
+fn resolve_link(url: &str, text: Vec<Inline>) -> Inline {
+    let url = url.trim();
+    if let Some(frag) = url.strip_prefix('#') {
+        return Inline::XRef {
+            text,
+            target: frag.to_string(),
+        };
+    }
+    if let Some(href) = rewrite_doc_link(url) {
+        return Inline::Link { text, href };
+    }
+    Inline::Link {
+        text,
+        href: url.to_string(),
     }
 }
 
@@ -406,7 +428,11 @@ fn build_sections(items: Vec<Item>, title: &str) -> (Vec<Section>, Option<String
         return (
             vec![Section {
                 number: None,
-                title: if title.is_empty() { "Document".into() } else { title.into() },
+                title: if title.is_empty() {
+                    "Document".into()
+                } else {
+                    title.into()
+                },
                 id: "body".into(),
                 blocks,
                 subsections: Vec::new(),
@@ -432,7 +458,10 @@ fn build_sections(items: Vec<Item>, title: &str) -> (Vec<Section>, Option<String
 
     for item in items {
         match item {
-            Item::Heading { level, title: htitle } => {
+            Item::Heading {
+                level,
+                title: htitle,
+            } => {
                 if level < top {
                     // The promoted wrapper heading: title source, not a section.
                     if title_from_h1.is_none() && !htitle.is_empty() {
@@ -505,7 +534,10 @@ fn insert_at_depth(siblings: &mut Vec<Section>, section: Section, depth: usize) 
 fn infer_collection(pre: &super::preamble::Preamble) -> Option<Collection> {
     if pre.get("eip").is_some() {
         // ERC files keep the `eip:` key but carry `category: ERC`.
-        if pre.get("category").is_some_and(|c| c.eq_ignore_ascii_case("ERC")) {
+        if pre
+            .get("category")
+            .is_some_and(|c| c.eq_ignore_ascii_case("ERC"))
+        {
             Some(Collection::Erc)
         } else {
             Some(Collection::Eip)
@@ -519,128 +551,6 @@ fn infer_collection(pre: &super::preamble::Preamble) -> Option<Collection> {
     }
 }
 
-fn apply_preamble(
-    doc: &mut Document,
-    pre: &super::preamble::Preamble,
-    collection: Option<Collection>,
-    number: Option<u32>,
-) {
-    if pre.fields.is_empty() {
-        doc.id = collection.zip(number).map(|(c, n)| DocId::new(c, n));
-        return;
-    }
-
-    // Id number: the collection's id key, else the caller's number.
-    let id_key = match collection {
-        Some(Collection::Bip) => "bip",
-        Some(Collection::Caip) => "caip",
-        _ => "eip",
-    };
-    let num = pre
-        .get(id_key)
-        .and_then(|v| v.trim().parse::<u32>().ok())
-        .or(number);
-    doc.id = collection.zip(num).map(|(c, n)| DocId::new(c, n));
-
-    if let Some(t) = pre.get("title") {
-        doc.title = t.trim().to_string();
-    }
-    // Lifecycle status (Draft/Review/Final/…) — the prominent badge.
-    if let Some(s) = pre.get("status") {
-        doc.status = Some(s.trim().to_string());
-    }
-    // Publication date.
-    if let Some(d) = pre.get("created").or_else(|| pre.get("date")) {
-        doc.date = Some(d.trim().to_string());
-    }
-    // One-line description → abstract.
-    if let Some(desc) = pre.get("description") {
-        let desc = desc.trim();
-        if !desc.is_empty() {
-            doc.abstract_ = vec![Block::Paragraph(vec![Inline::text(desc)])];
-        }
-    }
-    // Authors.
-    if let Some(a) = pre.get("author").or_else(|| pre.get("authors")) {
-        doc.authors = parse_authors(a);
-    }
-    // Relations to other documents.
-    let own = collection.unwrap_or(Collection::Eip);
-    for (label, key) in [("Requires", "requires"), ("Replaces", "replaces")] {
-        if let Some(v) = pre.get(key) {
-            let targets = parse_id_list(v, own);
-            if !targets.is_empty() {
-                doc.relations.push(Relation::new(label, targets));
-            }
-        }
-    }
-
-    // Everything else → the metadata table, skipping keys mapped above.
-    const MAPPED: [&str; 12] = [
-        "eip", "erc", "bip", "caip", "title", "status", "created", "date", "description",
-        "author", "authors", "requires",
-    ];
-    for (k, v) in &pre.fields {
-        let kl = k.to_ascii_lowercase();
-        if MAPPED.contains(&kl.as_str()) || kl == "replaces" || v.trim().is_empty() {
-            continue;
-        }
-        doc.extra.push((titlecase_key(k), v.trim().to_string()));
-    }
-}
-
-/// Parse an EIP-style author line: `Name (@github) <email>`, comma-separated.
-fn parse_authors(s: &str) -> Vec<Author> {
-    s.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|entry| {
-            let handle = extract_between(entry, '(', ')');
-            let email = extract_between(entry, '<', '>');
-            // The name is the text before the first '(' or '<'.
-            let name_end = entry
-                .find(['(', '<'])
-                .unwrap_or(entry.len());
-            let name = entry[..name_end].trim().to_string();
-            let link = handle
-                .filter(|h| h.starts_with('@'))
-                .map(|h| format!("https://github.com/{}", h.trim_start_matches('@')))
-                .or_else(|| email.map(|e| format!("mailto:{e}")));
-            Author { name, organization: None, link }
-        })
-        .filter(|a| !a.name.is_empty())
-        .collect()
-}
-
-fn extract_between(s: &str, open: char, close: char) -> Option<String> {
-    let start = s.find(open)? + 1;
-    let end = s[start..].find(close)? + start;
-    Some(s[start..end].trim().to_string())
-}
-
-/// Parse a comma-separated id-number list (`"2718, 155"`) into same-collection
-/// [`DocId`]s.
-fn parse_id_list(s: &str, collection: Collection) -> Vec<DocId> {
-    s.split(',')
-        .filter_map(|p| p.trim().parse::<u32>().ok())
-        .map(|n| DocId::new(collection, n))
-        .collect()
-}
-
-fn titlecase_key(k: &str) -> String {
-    // "discussions-to" -> "Discussions-To", "Layer" -> "Layer".
-    k.split('-')
-        .map(|part| {
-            let mut ch = part.chars();
-            match ch.next() {
-                Some(f) => format!("{}{}", f.to_ascii_uppercase(), ch.as_str()),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
 // ---------------------------------------------------------------------------
 // Block/inline helpers
 // ---------------------------------------------------------------------------
@@ -649,27 +559,35 @@ fn titlecase_key(k: &str) -> String {
 /// its source until a diagram backend is wired in), a recognized language →
 /// highlighted, otherwise verbatim.
 fn code_block(info: &str, literal: &str) -> Block {
-    let lang = info
-        .split([' ', '\t', ','])
-        .next()
-        .unwrap_or("")
-        .trim();
+    let lang = info.split([' ', '\t', ',']).next().unwrap_or("").trim();
     let code = literal.strip_suffix('\n').unwrap_or(literal);
 
     if lang.eq_ignore_ascii_case("math") {
         return math_block(code);
     }
     if lang.eq_ignore_ascii_case("mermaid") {
-        // No in-process mermaid backend yet: keep the source, render it as
-        // artwork. The empty `svg` is the extension point for a real renderer.
+        // Mermaid renders in-process only when the `mermaid` feature fills the
+        // `svg` post-parse (see `crate::diagram`); the empty `svg` here is that
+        // extension point, and the renderer falls back to the verbatim source.
         return Block::Diagram {
             svg: String::new(),
             source: code.to_string(),
         };
     }
-    if !lang.is_empty() {
-        if let Some(html) = crate::highlight::highlight(code, lang) {
-            return Block::HighlightedCode { language: lang.to_string(), html };
+    // The fence's declared language, or — for the many untagged fences in the
+    // EIP/ERC corpus — an obvious one sniffed from the content.
+    let sniffed = lang.is_empty().then(|| sniff_language(code)).flatten();
+    let effective = if !lang.is_empty() {
+        Some(lang)
+    } else {
+        sniffed
+    };
+    if let Some(l) = effective {
+        if let Some(html) = crate::highlight::highlight(code, l) {
+            return Block::HighlightedCode {
+                language: l.to_string(),
+                html,
+            };
         }
     }
     Block::Code {
@@ -678,30 +596,319 @@ fn code_block(info: &str, literal: &str) -> Block {
     }
 }
 
+/// Sniff an obvious language for an **untagged** fence so it can be highlighted
+/// instead of rendered as verbatim artwork. Deliberately conservative — only
+/// unmistakable JSON and Solidity are recognized; anything ambiguous stays a
+/// plain code block.
+fn sniff_language(code: &str) -> Option<&'static str> {
+    let t = code.trim();
+    let (Some(first), Some(last)) = (t.chars().next(), t.chars().last()) else {
+        return None;
+    };
+    // JSON: a bracketed object/array that carries a quoted key or string.
+    let bracketed = (first == '{' && last == '}') || (first == '[' && last == ']');
+    if bracketed && (t.contains("\":") || t.contains("\" :") || (first == '[' && t.contains('"'))) {
+        return Some("json");
+    }
+    // Solidity: the pragma is unmistakable; a leading contract/interface/library
+    // declaration with a body is a strong signal too.
+    if t.contains("pragma solidity") {
+        return Some("solidity");
+    }
+    let decl = ["contract ", "interface ", "library ", "abstract contract "]
+        .iter()
+        .any(|k| t.starts_with(k));
+    if decl && t.contains('{') {
+        return Some("solidity");
+    }
+    None
+}
+
 fn math_block(latex: &str) -> Block {
     match crate::mathml::latex_to_mathml(latex, true) {
-        Some(mathml) => Block::Math { mathml, source: latex.to_string() },
-        None => Block::Code { text: latex.to_string(), language: None },
+        Some(mathml) => Block::Math {
+            mathml,
+            source: latex.to_string(),
+        },
+        None => Block::Code {
+            text: latex.to_string(),
+            language: None,
+        },
     }
 }
 
 fn inline_math(latex: &str) -> Inline {
     match crate::mathml::latex_to_mathml(latex, false) {
-        Some(mathml) => Inline::Math { mathml, source: latex.to_string() },
+        Some(mathml) => Inline::Math {
+            mathml,
+            source: latex.to_string(),
+        },
         None => Inline::Code(latex.to_string()),
     }
 }
 
-/// Best-effort handling of a raw HTML block: strip tags to text so nothing is
-/// lost (we deliberately do not try to be a browser). Empty → dropped.
+/// Best-effort handling of a raw HTML block. A well-formed `<table>` becomes a
+/// real [`Block::Table`]; a `<details>`/`<summary>` disclosure becomes a
+/// [`Block::Aside`]; anything else is stripped to text so nothing is lost (we
+/// deliberately do not try to be a browser). Empty → dropped.
 fn html_block(literal: &str) -> Option<Block> {
-    let text = strip_tags(literal);
+    let trimmed = literal.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    // A real data table → a structured table (falls through to tag-stripping if
+    // the fragment isn't well-formed enough to parse).
+    if lower.contains("<table") {
+        if let Some(table) = parse_html_table(trimmed) {
+            return Some(Block::Table(table));
+        }
+    }
+    // A disclosure widget → an aside. comrak often splits `<details>` across
+    // several HTML blocks (its markdown body sits between them), so this handles
+    // both a whole `<details>…</details>` and a lone opening `<summary>` tag.
+    if lower.contains("<details") || lower.contains("<summary") {
+        return details_aside(trimmed);
+    }
+
+    let text = strip_tags(trimmed);
     let text = text.trim();
     if text.is_empty() {
         None
     } else {
         Some(Block::Paragraph(vec![Inline::text(text)]))
     }
+}
+
+/// Parse a raw-HTML `<table>` fragment into a [`Table`] with [`roxmltree`],
+/// after light sanitizing (closing void tags, decoding stray entities) so the
+/// common EIP inline table parses as XML. Returns `None` on any failure so the
+/// caller falls back to tag-stripping.
+fn parse_html_table(html: &str) -> Option<Table> {
+    let fragment = extract_element(html, "table")?;
+    let xml = sanitize_html_fragment(&fragment);
+    let doc = roxmltree::Document::parse(&xml).ok()?;
+    let root = doc.root_element();
+
+    let mut table = Table::default();
+    for tr in root.descendants().filter(|n| n.has_tag_name("tr")) {
+        let mut all_header = true;
+        let mut cells = Vec::new();
+        for cell in tr
+            .children()
+            .filter(|n| n.is_element() && (n.has_tag_name("td") || n.has_tag_name("th")))
+        {
+            if !cell.has_tag_name("th") {
+                all_header = false;
+            }
+            let mut inlines = Vec::new();
+            html_inlines(cell, &mut inlines);
+            cells.push(inlines);
+        }
+        if cells.is_empty() {
+            continue;
+        }
+        // The leading row is the head only when *every* cell is a `<th>`; a
+        // key/value row (`<th>label</th><td>value</td>`) stays a body row so the
+        // value isn't promoted into a header column.
+        if all_header && table.head.is_empty() && table.rows.is_empty() {
+            table.head = cells;
+        } else {
+            table.rows.push(cells);
+        }
+    }
+
+    (!table.head.is_empty() || !table.rows.is_empty()).then_some(table)
+}
+
+/// Convert the inline content of an HTML element (a table cell or `<summary>`)
+/// into IR inlines, mapping the small set of formatting tags that show up in
+/// EIP tables and degrading unknown tags to their text.
+fn html_inlines(node: roxmltree::Node, out: &mut Vec<Inline>) {
+    for child in node.children() {
+        if child.is_text() {
+            if let Some(t) = child.text() {
+                out.push(Inline::Text(t.to_string()));
+            }
+            continue;
+        }
+        if !child.is_element() {
+            continue;
+        }
+        match child.tag_name().name().to_ascii_lowercase().as_str() {
+            "code" | "tt" => out.push(Inline::Code(node_text(child))),
+            "strong" | "b" => {
+                let mut inner = Vec::new();
+                html_inlines(child, &mut inner);
+                out.push(Inline::Strong(inner));
+            }
+            "em" | "i" => {
+                let mut inner = Vec::new();
+                html_inlines(child, &mut inner);
+                out.push(Inline::Emph(inner));
+            }
+            "del" | "s" | "strike" => {
+                let mut inner = Vec::new();
+                html_inlines(child, &mut inner);
+                out.push(Inline::Strikethrough(inner));
+            }
+            "br" => out.push(Inline::LineBreak),
+            "a" => {
+                let href = child.attribute("href").unwrap_or_default();
+                let mut inner = Vec::new();
+                html_inlines(child, &mut inner);
+                if inner.is_empty() {
+                    inner.push(Inline::text(href));
+                }
+                out.push(resolve_link(href, inner));
+            }
+            // sup / sub / span / anything else: keep the text, drop the wrapper.
+            _ => html_inlines(child, out),
+        }
+    }
+}
+
+/// The concatenated text content of an element (for `<code>` cells).
+fn node_text(node: roxmltree::Node) -> String {
+    let mut s = String::new();
+    for d in node.descendants() {
+        if d.is_text() {
+            if let Some(t) = d.text() {
+                s.push_str(t);
+            }
+        }
+    }
+    s
+}
+
+/// Map a `<details>`/`<summary>` disclosure to an aside: the summary becomes a
+/// bold lead line and any inline body text follows. Content-losing cases (a bare
+/// closing `</details>`) yield `None`.
+fn details_aside(html: &str) -> Option<Block> {
+    let mut blocks = Vec::new();
+    if let Some(summary) = extract_element_inner(html, "summary") {
+        let summary = strip_tags(&summary);
+        let summary = summary.trim();
+        if !summary.is_empty() {
+            blocks.push(Block::Paragraph(vec![Inline::Strong(vec![Inline::text(
+                summary,
+            )])]));
+        }
+    }
+    // Body: the fragment minus the summary, stripped to text. Usually empty
+    // (the markdown body arrives as separate blocks); non-empty for a fully
+    // self-contained `<details>`.
+    let without_summary = remove_element(html, "summary");
+    let body = strip_tags(&without_summary);
+    let body = body.trim();
+    if !body.is_empty() {
+        blocks.push(Block::Paragraph(vec![Inline::text(body)]));
+    }
+    (!blocks.is_empty()).then_some(Block::Aside(blocks))
+}
+
+/// Extract the first complete `<tag …>…</tag>` fragment (case-insensitive).
+fn extract_element(html: &str, tag: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let start = lower.find(&format!("<{tag}"))?;
+    let close = format!("</{tag}>");
+    let close_start = lower.rfind(&close)?;
+    if close_start < start {
+        return None;
+    }
+    Some(html[start..close_start + close.len()].to_string())
+}
+
+/// The inner content of the first `<tag …>…</tag>` (case-insensitive), tags
+/// excluded.
+fn extract_element_inner(html: &str, tag: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let open = lower.find(&format!("<{tag}"))?;
+    let inner_start = html[open..].find('>')? + open + 1;
+    let close = format!("</{tag}>");
+    let close_start = lower[inner_start..].find(&close)? + inner_start;
+    Some(html[inner_start..close_start].to_string())
+}
+
+/// Remove every `<tag …>…</tag>` span (case-insensitive) from `html`.
+fn remove_element(html: &str, tag: &str) -> String {
+    let mut out = html.to_string();
+    while let Some(frag) = extract_element(&out, tag) {
+        out = out.replacen(&frag, " ", 1);
+    }
+    out
+}
+
+/// Make a raw-HTML fragment well-formed enough for an XML parser: self-close the
+/// common void tags and neutralize entities `roxmltree` doesn't predefine.
+fn sanitize_html_fragment(html: &str) -> String {
+    static VOID: OnceLock<Regex> = OnceLock::new();
+    let void = VOID.get_or_init(|| {
+        Regex::new(r"(?i)<(br|hr|img|wbr|col|input)\b([^>]*?)/?>").expect("valid regex")
+    });
+
+    let mut s = html.to_string();
+    // A handful of named entities XML doesn't know, mapped to their character.
+    for (from, to) in [
+        ("&nbsp;", "\u{00A0}"),
+        ("&mdash;", "—"),
+        ("&ndash;", "–"),
+        ("&hellip;", "…"),
+        ("&rarr;", "→"),
+        ("&larr;", "←"),
+        ("&times;", "×"),
+        ("&middot;", "·"),
+        ("&deg;", "°"),
+        ("&le;", "≤"),
+        ("&ge;", "≥"),
+        ("&ne;", "≠"),
+        ("&copy;", "©"),
+        ("&reg;", "®"),
+        ("&trade;", "™"),
+    ] {
+        if s.contains(from) {
+            s = s.replace(from, to);
+        }
+    }
+    let s = void.replace_all(&s, "<$1$2/>").into_owned();
+    escape_bare_amp(&s)
+}
+
+/// Escape every `&` that is not the start of an XML-predefined entity
+/// (`&amp;`/`&lt;`/`&gt;`/`&quot;`/`&apos;`) or a numeric character reference, so
+/// stray ampersands in raw HTML don't fail the XML parse. The `regex` crate has
+/// no look-around, so this is a small manual scan.
+fn escape_bare_amp(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find('&') {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos..]; // starts with '&'
+        if is_predefined_entity(after) {
+            out.push('&');
+        } else {
+            out.push_str("&amp;");
+        }
+        rest = &after[1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether `s` (which starts with `&`) begins with an XML-predefined named
+/// entity or a numeric character reference.
+fn is_predefined_entity(s: &str) -> bool {
+    let body = &s[1..];
+    let Some(semi) = body.find(';') else {
+        return false;
+    };
+    if semi == 0 || semi > 8 {
+        return false;
+    }
+    let ent = &body[..semi];
+    if let Some(num) = ent.strip_prefix('#') {
+        let num = num.strip_prefix(['x', 'X']).unwrap_or(num);
+        return !num.is_empty() && num.chars().all(|c| c.is_ascii_hexdigit());
+    }
+    matches!(ent, "amp" | "lt" | "gt" | "quot" | "apos")
 }
 
 fn strip_tags(html: &str) -> String {
@@ -765,7 +972,9 @@ fn collect_text<'a>(node: &'a AstNode<'a>, out: &mut String) {
 
 /// Rewrite a relative link to another collection document into an absolute web
 /// link. `./eip-2718.md#foo` → `https://eips.ethereum.org/EIPS/eip-2718#foo`.
-fn rewrite_doc_link(url: &str) -> Option<String> {
+/// Shared with the MediaWiki parser, whose `[[bip-0032.mediawiki|BIP32]]`
+/// cross-document wiki links resolve the same way.
+pub(crate) fn rewrite_doc_link(url: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         Regex::new(r"(?i)^(?:\.{1,2}/)*(?:[\w.-]+/)*(eip|erc|bip|caip|bolt)-0*(\d+)(?:\.(?:md|mediawiki))?(#.*)?$")
@@ -817,10 +1026,15 @@ mod tests {
         let md = "## D\n\n```mermaid\ngraph TD; A-->B;\n```\n";
         let doc = parse(md, None, None).unwrap();
         let has = doc.sections.iter().any(|s| {
-            s.blocks.iter().any(|b| matches!(b, Block::Diagram { svg, source }
-                if svg.is_empty() && source.contains("A-->B")))
+            s.blocks.iter().any(|b| {
+                matches!(b, Block::Diagram { svg, source }
+                if svg.is_empty() && source.contains("A-->B"))
+            })
         });
-        assert!(has, "mermaid should map to an (unrendered) Diagram carrying its source");
+        assert!(
+            has,
+            "mermaid should map to an (unrendered) Diagram carrying its source"
+        );
     }
 
     #[test]
@@ -859,13 +1073,88 @@ mod tests {
     }
 
     #[test]
-    fn strips_raw_html_block_to_text() {
-        match html_block("<table><tr><td>hi</td><td>there</td></tr></table>") {
+    fn raw_html_table_becomes_a_real_table() {
+        let html = "<table>\n<tr><th>Name</th><th>Value</th></tr>\n\
+                    <tr><td>alpha</td><td><code>0x01</code></td></tr>\n\
+                    <tr><td>beta &amp; co</td><td>2&nbsp;wei</td></tr>\n</table>";
+        match html_block(html) {
+            Some(Block::Table(t)) => {
+                assert_eq!(t.head.len(), 2);
+                assert_eq!(t.rows.len(), 2);
+                // Header text, inline <code>, and entities survive.
+                assert!(matches!(t.head[0].as_slice(), [Inline::Text(s)] if s == "Name"));
+                assert!(matches!(t.rows[0][1].as_slice(), [Inline::Code(s)] if s == "0x01"));
+                assert!(t.rows[1][0]
+                    .iter()
+                    .any(|i| matches!(i, Inline::Text(s) if s.contains('&'))));
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn html_key_value_table_rows_stay_body_rows() {
+        // A `<th>label</th><td>value</td>` row is NOT a header row — only an
+        // all-`<th>` row is — so the value isn't promoted into a header column.
+        let html = "<table>\n<tr><th>Name</th><td>alpha</td></tr>\n\
+                    <tr><th>Age</th><td>30</td></tr>\n</table>";
+        match html_block(html) {
+            Some(Block::Table(t)) => {
+                assert!(
+                    t.head.is_empty(),
+                    "no all-th header row: head = {:?}",
+                    t.head
+                );
+                assert_eq!(t.rows.len(), 2, "both rows are body rows");
+            }
+            other => panic!("expected a table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_html_table_falls_back_to_text() {
+        // Not well-formed XML (stray unclosed tag with attributes) → tag-strip.
+        match html_block("<table><tr><td>hi<td>there</table>") {
             Some(Block::Paragraph(inls)) => {
                 assert!(matches!(inls.as_slice(), [Inline::Text(t)] if t == "hi there"));
             }
-            other => panic!("expected a text paragraph, got {other:?}"),
+            other => panic!("expected a text paragraph fallback, got {other:?}"),
         }
         assert!(html_block("<br/>").is_none());
+    }
+
+    #[test]
+    fn details_summary_becomes_an_aside() {
+        // A lone opening tag (comrak splits the markdown body out): summary only.
+        match html_block("<details><summary>Show proof</summary>") {
+            Some(Block::Aside(blocks)) => {
+                assert!(matches!(&blocks[0],
+                    Block::Paragraph(inls) if matches!(inls.as_slice(),
+                        [Inline::Strong(s)] if matches!(s.as_slice(), [Inline::Text(t)] if t == "Show proof"))));
+            }
+            other => panic!("expected an aside, got {other:?}"),
+        }
+        // A self-contained details keeps its body text too.
+        match html_block("<details><summary>Title</summary>Body text here.</details>") {
+            Some(Block::Aside(blocks)) => assert_eq!(blocks.len(), 2),
+            other => panic!("expected an aside, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sniffs_untagged_json_and_solidity_fences() {
+        assert_eq!(sniff_language("{\n  \"a\": 1\n}"), Some("json"));
+        assert_eq!(sniff_language("[\n  {\"x\": true}\n]"), Some("json"));
+        assert_eq!(
+            sniff_language("pragma solidity ^0.8.0;\ncontract C {}"),
+            Some("solidity")
+        );
+        assert_eq!(
+            sniff_language("interface IFoo {\n  function bar() external;\n}"),
+            Some("solidity")
+        );
+        // Ambiguous / prose stays unsniffed.
+        assert_eq!(sniff_language("just some words"), None);
+        assert_eq!(sniff_language("{ not really json }"), None);
     }
 }

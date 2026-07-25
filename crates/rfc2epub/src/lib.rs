@@ -9,6 +9,7 @@
 //! several parsers and consumed by one renderer keeps output quality uniform.
 
 pub mod assets;
+pub mod diagram;
 pub mod error;
 pub mod fetch;
 pub mod highlight;
@@ -35,6 +36,10 @@ pub struct Options {
     /// Reproduce the source document's original pagination as EPUB page breaks.
     /// Only affects plain-text sources (xml2rfc/Markdown have no page concept).
     pub page_breaks: bool,
+    /// Allow the opt-in network fallback (Kroki) for mermaid diagrams the
+    /// in-process engine can't render. Off by default: it sends the diagram
+    /// source to a third-party service.
+    pub mermaid_online: bool,
 }
 
 impl Default for Options {
@@ -44,6 +49,7 @@ impl Default for Options {
             cache_dir: fetch::default_cache_dir(),
             svg_mode: model::SvgMode::default(),
             page_breaks: true,
+            mermaid_online: false,
         }
     }
 }
@@ -58,12 +64,20 @@ pub fn convert(spec: DocSpec, output: &Path, opts: &Options) -> Result<()> {
         }
         kind => parse::parse(&fetched.body, kind, Some(fetched.number))?,
     };
-    // Markdown documents may reference images; download and embed them.
-    if fetched.kind == model::SourceKind::Markdown {
-        if let Some(base) = &fetched.asset_base {
-            assets::resolve(&mut doc, base, opts.cache_dir.as_deref(), fetched.collection);
-        }
+    // Markdown and MediaWiki documents may reference images; download and embed
+    // them. A source with an `asset_base` is exactly one that can carry assets
+    // (RFCs have none).
+    if let Some(base) = &fetched.asset_base {
+        assets::resolve(
+            &mut doc,
+            base,
+            opts.cache_dir.as_deref(),
+            fetched.collection,
+        );
     }
+    // Render any mermaid diagrams in place (in-process; `mermaid_online` adds the
+    // opt-in Kroki fallback).
+    diagram::resolve(&mut doc, opts.mermaid_online);
     let bytes = render::to_epub(&doc, opts.svg_mode, opts.page_breaks)?;
     std::fs::write(output, bytes).map_err(|source| Error::Io {
         path: output.to_path_buf(),
@@ -80,10 +94,6 @@ pub fn convert_rfc(number: u32, output: &Path, opts: &Options) -> Result<()> {
 /// Parse an already-loaded source string into a [`Document`] without touching
 /// the network. `kind` selects the parser; Markdown infers its collection from
 /// the preamble.
-pub fn parse_source(
-    body: &str,
-    kind: model::SourceKind,
-    number: Option<u32>,
-) -> Result<Document> {
+pub fn parse_source(body: &str, kind: model::SourceKind, number: Option<u32>) -> Result<Document> {
     parse::parse(body, kind, number)
 }

@@ -22,6 +22,7 @@ const EIP_BASE: &str = "https://raw.githubusercontent.com/ethereum/EIPs/master/E
 const ERC_BASE: &str = "https://raw.githubusercontent.com/ethereum/ERCs/master/ERCS/";
 const BIP_BASE: &str = "https://raw.githubusercontent.com/bitcoin/bips/master/";
 const CAIP_BASE: &str = "https://raw.githubusercontent.com/ChainAgnostic/CAIPs/main/CAIPs/";
+const BOLT_BASE: &str = "https://raw.githubusercontent.com/lightning/bolts/master/";
 
 /// Generous cap; the largest sources are a few MB.
 const BODY_LIMIT: u64 = 64 * 1024 * 1024;
@@ -90,9 +91,7 @@ pub fn fetch(spec: DocSpec, pref: SourcePref, cache_dir: Option<&Path>) -> Resul
         Collection::Erc => fetch_erc(spec.number, cache_dir),
         Collection::Bip => fetch_bip(spec.number, cache_dir),
         Collection::Caip => fetch_caip(spec.number, cache_dir),
-        Collection::Bolt => Err(Error::Unsupported(
-            "fetching BOLTs is not yet supported; convert a local file with --input".into(),
-        )),
+        Collection::Bolt => fetch_bolt(spec.number, cache_dir),
     }
 }
 
@@ -112,7 +111,8 @@ pub fn fetch_rfc(number: u32, pref: SourcePref, cache_dir: Option<&Path>) -> Res
             Ok(base(body, SourceKind::Xml))
         }
         SourcePref::Text => {
-            let body = fetch_rfc_kind(number, SourceKind::Text, cache_dir)?.ok_or_else(not_found)?;
+            let body =
+                fetch_rfc_kind(number, SourceKind::Text, cache_dir)?.ok_or_else(not_found)?;
             Ok(base(body, SourceKind::Text))
         }
         SourcePref::Auto => {
@@ -121,14 +121,19 @@ pub fn fetch_rfc(number: u32, pref: SourcePref, cache_dir: Option<&Path>) -> Res
                     return Ok(base(xml, SourceKind::Xml));
                 }
             }
-            let body = fetch_rfc_kind(number, SourceKind::Text, cache_dir)?.ok_or_else(not_found)?;
+            let body =
+                fetch_rfc_kind(number, SourceKind::Text, cache_dir)?.ok_or_else(not_found)?;
             Ok(base(body, SourceKind::Text))
         }
     }
 }
 
 /// Fetch one RFC format, returning `Ok(None)` on a clean 404.
-fn fetch_rfc_kind(number: u32, kind: SourceKind, cache_dir: Option<&Path>) -> Result<Option<String>> {
+fn fetch_rfc_kind(
+    number: u32,
+    kind: SourceKind,
+    cache_dir: Option<&Path>,
+) -> Result<Option<String>> {
     let ext = match kind {
         SourceKind::Xml => "xml",
         _ => "txt",
@@ -190,6 +195,25 @@ fn fetch_bip(number: u32, cache_dir: Option<&Path>) -> Result<Fetched> {
         collection: Collection::Bip,
         number,
         asset_base: Some(BIP_BASE.to_string()),
+    })
+}
+
+/// Fetch a Lightning BOLT. BOLT filenames embed a title (`11-payment-encoding.md`)
+/// and `raw.githubusercontent.com` can't be listed, so the number→filename map
+/// ([`crate::model::bolt_filename`]) resolves the path. Content is plain GFM with
+/// no frontmatter, so it flows through the Markdown parser like any other spec.
+fn fetch_bolt(number: u32, cache_dir: Option<&Path>) -> Result<Fetched> {
+    let filename = crate::model::bolt_filename(number)
+        .ok_or_else(|| Error::NotFound(format!("BOLT {number}")))?;
+    let url = format!("{BOLT_BASE}{filename}");
+    let body = cached(filename, &url, cache_dir)?
+        .ok_or_else(|| Error::NotFound(format!("BOLT {number}")))?;
+    Ok(Fetched {
+        body,
+        kind: SourceKind::Markdown,
+        collection: Collection::Bolt,
+        number,
+        asset_base: Some(BOLT_BASE.to_string()),
     })
 }
 
@@ -273,6 +297,26 @@ pub fn http_get_bytes(url: &str) -> Result<Option<Vec<u8>>> {
     Ok(Some(bytes))
 }
 
+/// POST `body` to `url` and return the response text, or `None` on any failure
+/// (network error or non-2xx status) so callers can degrade gracefully. Used by
+/// the opt-in Kroki mermaid-rendering fallback.
+pub fn http_post_text(url: &str, body: &str) -> Option<String> {
+    let config = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .user_agent(concat!("rfc2epub/", env!("CARGO_PKG_VERSION")))
+        .build();
+    let agent: ureq::Agent = config.into();
+    let mut resp = agent.post(url).send(body).ok()?;
+    if !(200..300).contains(&resp.status().as_u16()) {
+        return None;
+    }
+    resp.body_mut()
+        .with_config()
+        .limit(BODY_LIMIT)
+        .read_to_string()
+        .ok()
+}
+
 fn get(url: &str) -> Result<ureq::http::Response<ureq::Body>> {
     let config = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -310,7 +354,10 @@ fn frontmatter_status(body: &str) -> Option<String> {
     let end = rest.find("\n---")?;
     for line in rest[..end].lines() {
         let line = line.trim();
-        if let Some(v) = line.strip_prefix("status:").or_else(|| line.strip_prefix("Status:")) {
+        if let Some(v) = line
+            .strip_prefix("status:")
+            .or_else(|| line.strip_prefix("Status:"))
+        {
             return Some(v.trim().to_string());
         }
     }
@@ -329,14 +376,46 @@ mod tests {
 
     #[test]
     fn parses_doc_specs() {
-        assert_eq!(DocSpec::parse("9110"), Some(DocSpec::new(Collection::Rfc, 9110)));
-        assert_eq!(DocSpec::parse("rfc-9110"), Some(DocSpec::new(Collection::Rfc, 9110)));
-        assert_eq!(DocSpec::parse("eip-1559"), Some(DocSpec::new(Collection::Eip, 1559)));
-        assert_eq!(DocSpec::parse("ERC-20"), Some(DocSpec::new(Collection::Erc, 20)));
-        assert_eq!(DocSpec::parse("bip-341"), Some(DocSpec::new(Collection::Bip, 341)));
-        assert_eq!(DocSpec::parse("caip 2"), Some(DocSpec::new(Collection::Caip, 2)));
+        assert_eq!(
+            DocSpec::parse("9110"),
+            Some(DocSpec::new(Collection::Rfc, 9110))
+        );
+        assert_eq!(
+            DocSpec::parse("rfc-9110"),
+            Some(DocSpec::new(Collection::Rfc, 9110))
+        );
+        assert_eq!(
+            DocSpec::parse("eip-1559"),
+            Some(DocSpec::new(Collection::Eip, 1559))
+        );
+        assert_eq!(
+            DocSpec::parse("ERC-20"),
+            Some(DocSpec::new(Collection::Erc, 20))
+        );
+        assert_eq!(
+            DocSpec::parse("bip-341"),
+            Some(DocSpec::new(Collection::Bip, 341))
+        );
+        assert_eq!(
+            DocSpec::parse("caip 2"),
+            Some(DocSpec::new(Collection::Caip, 2))
+        );
+        assert_eq!(
+            DocSpec::parse("bolt-11"),
+            Some(DocSpec::new(Collection::Bolt, 11))
+        );
         assert_eq!(DocSpec::parse("nope-1"), None);
         assert_eq!(DocSpec::parse("eip-x"), None);
+    }
+
+    #[test]
+    fn bolt_number_maps_to_titled_filename() {
+        use crate::model::bolt_filename;
+        assert_eq!(bolt_filename(11), Some("11-payment-encoding.md"));
+        assert_eq!(bolt_filename(0), Some("00-introduction.md"));
+        // BOLT 6 does not exist; an unknown number has no filename.
+        assert_eq!(bolt_filename(6), None);
+        assert_eq!(bolt_filename(99), None);
     }
 
     #[test]
@@ -350,7 +429,10 @@ mod tests {
         // Short strings pass through unchanged.
         assert_eq!(char_boundary_prefix("hi", 2048), "hi");
         // xml2rfc detection still works with non-ASCII before the marker.
-        let xml = format!("<?xml?><rfc version=\"3\" who=\"\u{00e9}\">{}", "x".repeat(4000));
+        let xml = format!(
+            "<?xml?><rfc version=\"3\" who=\"\u{00e9}\">{}",
+            "x".repeat(4000)
+        );
         assert!(is_xml_v3(&xml));
     }
 

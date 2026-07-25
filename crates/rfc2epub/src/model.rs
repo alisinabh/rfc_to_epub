@@ -177,12 +177,36 @@ impl Collection {
             Collection::Bip => {
                 format!("https://github.com/bitcoin/bips/blob/master/bip-{n:04}.mediawiki")
             }
-            Collection::Bolt => {
-                format!("https://github.com/lightning/bolts/blob/master/{n:02}.md")
-            }
+            Collection::Bolt => match bolt_filename(n) {
+                Some(f) => format!("https://github.com/lightning/bolts/blob/master/{f}"),
+                None => format!("https://github.com/lightning/bolts/blob/master/{n:02}.md"),
+            },
             Collection::Caip => format!("https://chainagnostic.org/CAIPs/caip-{n}"),
         }
     }
+}
+
+/// The on-disk filename for a Lightning BOLT number in the `lightning/bolts`
+/// repo. BOLT files embed a title in their name (`11-payment-encoding.md`), so a
+/// number alone can't build the raw URL — this is the stable, hand-maintained
+/// map (update it when new BOLTs land). `None` for an unknown number, including
+/// BOLT 6, which does not exist (its content folded into other BOLTs).
+pub(crate) fn bolt_filename(n: u32) -> Option<&'static str> {
+    Some(match n {
+        0 => "00-introduction.md",
+        1 => "01-messaging.md",
+        2 => "02-peer-protocol.md",
+        3 => "03-transactions.md",
+        4 => "04-onion-routing.md",
+        5 => "05-onchain.md",
+        7 => "07-routing-gossip.md",
+        8 => "08-transport.md",
+        9 => "09-features.md",
+        10 => "10-dns-bootstrap.md",
+        11 => "11-payment-encoding.md",
+        12 => "12-offer-encoding.md",
+        _ => return None,
+    })
 }
 
 /// A labeled set of related documents (`"Obsoletes"`, `"Requires"`, …).
@@ -194,7 +218,10 @@ pub struct Relation {
 
 impl Relation {
     pub fn new(label: impl Into<String>, targets: Vec<DocId>) -> Self {
-        Self { label: label.into(), targets }
+        Self {
+            label: label.into(),
+            targets,
+        }
     }
 }
 
@@ -274,7 +301,10 @@ pub enum Block {
     Artwork(String),
     /// Source code / formal syntax — verbatim monospace with an optional
     /// language hint. The unhighlighted path (RFC ABNF, untagged fences).
-    Code { text: String, language: Option<String> },
+    Code {
+        text: String,
+        language: Option<String>,
+    },
     /// Pre-highlighted source code: an XHTML fragment of `<span class="…">`
     /// runs (produced by the syntax highlighter), wrapped in `<pre><code>` by
     /// the renderer. The syntax-aware counterpart of [`Block::Code`].
@@ -294,7 +324,11 @@ pub enum Block {
     Quote(Vec<Block>),
     /// A raster/vector image with alt text and an optional caption. `resource`
     /// names an [`Asset`] embedded in the EPUB.
-    Figure { resource: String, alt: String, caption: Option<Vec<Inline>> },
+    Figure {
+        resource: String,
+        alt: String,
+        caption: Option<Vec<Inline>>,
+    },
     /// A rendered diagram (SVG), flowing through the same SVG machinery as
     /// [`Block::Artwork`]. `source` keeps the diagram's text for fallback.
     Diagram { svg: String, source: String },
@@ -367,17 +401,32 @@ pub enum Inline {
     /// Inline monospace (`<tt>` / `<code>`).
     Code(String),
     /// A hyperlink to an external URI (`<eref>` / Markdown link).
-    Link { text: Vec<Inline>, href: String },
+    Link {
+        text: Vec<Inline>,
+        href: String,
+    },
     /// An internal cross-reference (`<xref>`); resolved to an in-book anchor
     /// when the target is local, otherwise shown as plain text.
-    XRef { text: Vec<Inline>, target: String },
+    XRef {
+        text: Vec<Inline>,
+        target: String,
+    },
     /// An inline image; `resource` names an [`Asset`] embedded in the EPUB.
-    Image { resource: String, alt: String },
+    Image {
+        resource: String,
+        alt: String,
+    },
     /// A footnote reference; renders as a superscript link to the footnote
     /// definition anchored at `fn-{name}`.
-    FootnoteRef { name: String, number: usize },
+    FootnoteRef {
+        name: String,
+        number: usize,
+    },
     /// Inline math (`$…$`): MathML Core markup with the LaTeX `source` kept.
-    Math { mathml: String, source: String },
+    Math {
+        mathml: String,
+        source: String,
+    },
     /// A hard line break (`<br/>`).
     LineBreak,
 }

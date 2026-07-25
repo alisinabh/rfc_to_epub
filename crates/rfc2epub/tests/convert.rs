@@ -53,14 +53,8 @@ fn xml_extracts_metadata_and_blocks() {
     assert_eq!(intro.subsections[0].number.as_deref(), Some("1.1"));
 
     // Artwork and code survive as verbatim blocks.
-    assert!(intro
-        .blocks
-        .iter()
-        .any(|b| matches!(b, Block::Artwork(_))));
-    assert!(intro
-        .blocks
-        .iter()
-        .any(|b| matches!(b, Block::Code { .. })));
+    assert!(intro.blocks.iter().any(|b| matches!(b, Block::Artwork(_))));
+    assert!(intro.blocks.iter().any(|b| matches!(b, Block::Code { .. })));
 }
 
 const TEXT: &str = "
@@ -103,7 +97,10 @@ fn text_reconstructs_sections_and_preserves_art() {
     });
     assert!(has_reflowed_prose, "prose should be reflowed");
     assert!(
-        intro.blocks.iter().any(|b| matches!(b, Block::Artwork(a) if a.contains("art"))),
+        intro
+            .blocks
+            .iter()
+            .any(|b| matches!(b, Block::Artwork(a) if a.contains("art"))),
         "ascii box should be preserved as artwork"
     );
 }
@@ -167,15 +164,18 @@ A claim needing a note.[^note]
 Deeper content here.
 "#;
 
-fn find_section<'a>(sections: &'a [rfc2epub::model::Section], title: &str) -> Option<&'a rfc2epub::model::Section> {
+fn find_section<'a>(
+    sections: &'a [rfc2epub::model::Section],
+    title: &str,
+) -> Option<&'a rfc2epub::model::Section> {
     sections.iter().find(|s| s.title == title)
 }
 
 fn any_block(doc: &rfc2epub::Document, pred: impl Fn(&Block) -> bool + Copy) -> bool {
     fn walk(sections: &[rfc2epub::model::Section], pred: &dyn Fn(&Block) -> bool) -> bool {
-        sections.iter().any(|s| {
-            s.blocks.iter().any(&pred) || walk(&s.subsections, pred)
-        })
+        sections
+            .iter()
+            .any(|s| s.blocks.iter().any(&pred) || walk(&s.subsections, pred))
     }
     walk(&doc.sections, &pred)
 }
@@ -195,17 +195,33 @@ fn markdown_eip_full_pipeline() {
     // Authors: GitHub handle → profile link; email → mailto.
     assert_eq!(doc.authors.len(), 2);
     assert_eq!(doc.authors[0].name, "Alice");
-    assert_eq!(doc.authors[0].link.as_deref(), Some("https://github.com/alice"));
+    assert_eq!(
+        doc.authors[0].link.as_deref(),
+        Some("https://github.com/alice")
+    );
     assert_eq!(doc.authors[1].name, "Bob");
-    assert_eq!(doc.authors[1].link.as_deref(), Some("mailto:bob@example.com"));
+    assert_eq!(
+        doc.authors[1].link.as_deref(),
+        Some("mailto:bob@example.com")
+    );
 
     // Relations.
-    let req = doc.relations.iter().find(|r| r.label == "Requires").unwrap();
-    assert_eq!(req.targets.iter().map(|t| t.number).collect::<Vec<_>>(), vec![20, 721]);
+    let req = doc
+        .relations
+        .iter()
+        .find(|r| r.label == "Requires")
+        .unwrap();
+    assert_eq!(
+        req.targets.iter().map(|t| t.number).collect::<Vec<_>>(),
+        vec![20, 721]
+    );
 
     // Extra metadata table carries unmapped keys.
     let extra_keys: Vec<&str> = doc.extra.iter().map(|(k, _)| k.as_str()).collect();
-    assert!(extra_keys.contains(&"Discussions-To"), "extra = {extra_keys:?}");
+    assert!(
+        extra_keys.contains(&"Discussions-To"),
+        "extra = {extra_keys:?}"
+    );
     assert!(extra_keys.contains(&"Type"));
     assert!(extra_keys.contains(&"Category"));
 
@@ -223,21 +239,156 @@ fn markdown_eip_full_pipeline() {
     let abstract_sec = find_section(&doc.sections, "Abstract").unwrap();
     let has_xref = abstract_sec.blocks.iter().any(|b| matches!(b, Block::Paragraph(inls)
         if inls.iter().any(|i| matches!(i, Inline::XRef { target, .. } if target == "specification"))));
-    assert!(has_xref, "cross-ref should become an XRef to 'specification'");
+    assert!(
+        has_xref,
+        "cross-ref should become an XRef to 'specification'"
+    );
 
     // Cross-document link rewritten to an absolute web URL.
     let has_ext_link = abstract_sec.blocks.iter().any(|b| matches!(b, Block::Paragraph(inls)
         if inls.iter().any(|i| matches!(i, Inline::Link { href, .. } if href == "https://eips.ethereum.org/EIPS/eip-20"))));
-    assert!(has_ext_link, "./eip-20.md should rewrite to the canonical URL");
+    assert!(
+        has_ext_link,
+        "./eip-20.md should rewrite to the canonical URL"
+    );
 
     // Solidity code highlighted; inline + display math present; GFM table.
-    assert!(any_block(&doc, |b| matches!(b, Block::HighlightedCode { language, .. } if language == "solidity")));
-    assert!(any_block(&doc, |b| matches!(b, Block::Math { .. })), "display math block");
-    assert!(any_block(&doc, |b| matches!(b, Block::Table(t) if t.align.len() == 2)));
+    assert!(any_block(
+        &doc,
+        |b| matches!(b, Block::HighlightedCode { language, .. } if language == "solidity")
+    ));
+    assert!(
+        any_block(&doc, |b| matches!(b, Block::Math { .. })),
+        "display math block"
+    );
+    assert!(any_block(
+        &doc,
+        |b| matches!(b, Block::Table(t) if t.align.len() == 2)
+    ));
 
     // Footnote reference and definition anchored consistently.
-    assert!(any_block(&doc, |b| matches!(b, Block::DefinitionList(entries)
-        if entries.iter().any(|e| e.anchor.as_deref() == Some("fn-note")))));
+    assert!(any_block(
+        &doc,
+        |b| matches!(b, Block::DefinitionList(entries)
+        if entries.iter().any(|e| e.anchor.as_deref() == Some("fn-note")))
+    ));
+
+    // Renders to a valid EPUB.
+    let bytes = render::to_epub(&doc, SvgMode::Inline, false).unwrap();
+    assert_eq!(&bytes[..2], b"PK");
+}
+
+const BIP_WIKI: &str = "<pre>
+  BIP: 341
+  Layer: Consensus (soft fork)
+  Title: Taproot: SegWit version 1 spending rules
+  Author: Pieter Wuille <pieter@example.com>
+          Jonas Nick <jonas@example.com>
+  Status: Final
+  Type: Standards Track
+  Created: 2020-01-19
+  Requires: 340, 342
+</pre>
+
+==Abstract==
+
+This BIP describes '''Taproot''', a new SegWit version 1 output type,
+with rules described in [[bip-0342.mediawiki|BIP-342]].<ref>See the motivation.</ref>
+
+==Specification==
+
+A table of fields:
+
+{| class=\"wikitable\"
+! Field !! Size
+|-
+| version || 1
+|-
+| style=\"text-align:right\" | witness || variable
+|}
+
+Reference code:
+
+<source lang=\"python\">
+def tweak(pubkey):
+    return pubkey
+</source>
+
+===Notes===
+
+* first point
+* second point with <code>OP_CHECKSIG</code>
+
+See [https://example.com/taproot the write-up] for more.
+";
+
+#[test]
+fn mediawiki_bip_full_pipeline() {
+    use rfc2epub::model::{Collection, Inline};
+    let doc = parse_source(BIP_WIKI, SourceKind::Mediawiki, Some(341)).unwrap();
+
+    // Preamble → metadata.
+    assert_eq!(doc.collection(), Some(Collection::Bip));
+    assert_eq!(doc.number(), Some(341));
+    assert_eq!(doc.title, "Taproot: SegWit version 1 spending rules");
+    assert_eq!(doc.status.as_deref(), Some("Final"));
+    assert_eq!(doc.date.as_deref(), Some("2020-01-19"));
+    assert_eq!(doc.authors.len(), 2, "space-joined BIP authors split");
+    let req = doc
+        .relations
+        .iter()
+        .find(|r| r.label == "Requires")
+        .unwrap();
+    assert_eq!(
+        req.targets.iter().map(|t| t.number).collect::<Vec<_>>(),
+        vec![340, 342]
+    );
+    // `Layer` (unmapped) lands in the metadata table.
+    assert!(doc.extra.iter().any(|(k, _)| k == "Layer"));
+
+    // Sections: Abstract, Specification (+ Notes), Footnotes. No stray
+    // "Document" section from the preamble `<pre>`.
+    assert!(find_section(&doc.sections, "Abstract").is_some());
+    let spec = find_section(&doc.sections, "Specification").expect("spec section");
+    assert!(find_section(&spec.subsections, "Notes").is_some());
+    assert!(find_section(&doc.sections, "Footnotes").is_some());
+
+    // Bold, cross-document wiki link, and a footnote in the Abstract.
+    let abstract_sec = find_section(&doc.sections, "Abstract").unwrap();
+    assert!(abstract_sec
+        .blocks
+        .iter()
+        .any(|b| matches!(b, Block::Paragraph(inls)
+        if inls.iter().any(|i| matches!(i, Inline::Strong(_))))));
+    assert!(abstract_sec
+        .blocks
+        .iter()
+        .any(|b| matches!(b, Block::Paragraph(inls)
+        if inls.iter().any(|i| matches!(i, Inline::Link { href, .. }
+            if href == "https://github.com/bitcoin/bips/blob/master/bip-0342.mediawiki")))));
+    assert!(abstract_sec
+        .blocks
+        .iter()
+        .any(|b| matches!(b, Block::Paragraph(inls)
+        if inls.iter().any(|i| matches!(i, Inline::FootnoteRef { number, .. } if *number == 1)))));
+
+    // Wiki table, highlighted Python, external link, and inline <code>.
+    assert!(any_block(
+        &doc,
+        |b| matches!(b, Block::Table(t) if t.head.len() == 2 && t.rows.len() == 2)
+    ));
+    assert!(any_block(
+        &doc,
+        |b| matches!(b, Block::HighlightedCode { language, .. } if language == "python")
+    ));
+    assert!(any_block(&doc, |b| matches!(b, Block::List(_))));
+
+    // Footnote definition anchored consistently with the reference.
+    assert!(any_block(
+        &doc,
+        |b| matches!(b, Block::DefinitionList(entries)
+        if entries.iter().any(|e| e.anchor.as_deref() == Some("fn-auto1")))
+    ));
 
     // Renders to a valid EPUB.
     let bytes = render::to_epub(&doc, SvgMode::Inline, false).unwrap();
