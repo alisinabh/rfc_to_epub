@@ -1,0 +1,93 @@
+:root {
+  --fg: #1a1a1a;
+  --bg: #ffffff;
+  --muted: #5c5c5c;
+  --line: #dcdcdc;
+  --link: #0b57d0;
+  --accent-bg: #eef3fd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6e6e6;
+    --bg: #16181c;
+    --muted: #9aa0a6;
+    --line: #33363b;
+    --link: #8ab4f8;
+    --accent-bg: #1e2430;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+  max-width: 46rem;
+}
+
+h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+p { margin: .5rem 0; }
+a { color: var(--link); }
+
+.muted { color: var(--muted); font-size: .9rem; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+.button {
+  display: inline-block;
+  padding: .5rem .9rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--accent-bg);
+  text-decoration: none;
+  font-weight: 600;
+}
+.button:hover { border-color: var(--link); }
+
+#q {
+  width: 100%;
+  padding: .6rem .7rem;
+  margin-top: 1.5rem;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+#q:focus { outline: 2px solid var(--link); outline-offset: 1px; }
+
+ul { list-style: none; margin: 0; padding: 0; }
+
+li {
+  display: flex;
+  gap: 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: .6rem 0;
+  border-top: 1px solid var(--line);
+}
+
+li .num { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+li .meta { color: var(--muted); font-size: .85rem; }
+li .dl { white-space: nowrap; }
+li .none { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+
+.badge {
+  font-size: .7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: .1rem .35rem;
+  border-radius: 4px;
+  background: var(--accent-bg);
+  border: 1px solid var(--line);
+  margin-left: .4rem;
+}
+
+footer { margin-top: 3rem; border-top: 1px solid var(--line); padding-top: 1rem; }

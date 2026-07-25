@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RFCs as EPUB</title>
+<meta name="description" content="Every IETF RFC as a clean, reflowable EPUB. Rebuilt weekly.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>RFCs as EPUB</h1>
+  <p>
+    Every IETF RFC converted to a clean, reflowable EPUB by
+    <a href="https://github.com/alisinabh/rfc_to_epub">rfc2epub</a>.
+    Rebuilt weekly, so new RFCs show up here on their own.
+  </p>
+  <p id="stats" class="muted">Loading&hellip;</p>
+  <p><a id="zip" class="button" href="#" hidden>Download all (ZIP)</a></p>
+</header>
+
+<main>
+  <label for="q" class="visually-hidden">Search RFCs</label>
+  <input id="q" type="search" placeholder="Search by RFC number or title…"
+         autocomplete="off" autocapitalize="off" spellcheck="false" autofocus>
+  <p id="count" class="muted" aria-live="polite"></p>
+  <ul id="results"></ul>
+</main>
+
+<footer>
+  <p class="muted">
+    Source data from the <a href="https://www.rfc-editor.org/">RFC Editor</a>.
+    Site and converter: <a href="https://github.com/alisinabh/rfc_to_epub">alisinabh/rfc_to_epub</a>.
+  </p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
